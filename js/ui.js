@@ -1,7 +1,7 @@
 /* ==========================================================================
-   ZONEFALL — UI (vanilla JS, ออกแบบให้แตะเล่นบนมือถือ)
-   อ่านกติกา/การ์ดจาก data.js, ตัดสินทุกอย่างผ่าน Z (engine) เพื่อให้
-   ตัวเกมกับหน้ากติกาสอดคล้องกันเสมอ
+   ZONEFALL — UI (vanilla JS) · โครงจอตาม mockup ของทีม: rail Flare ขอบสนาม,
+   การ์ดใช้ frame จริง (assets/ui/frame-*.png) + crop ภาพศิลปะจากสแกน (assets/art/)
+   ทุกการตัดสินกติกาอยู่ใน js/engine.js — ไฟล์นี้แค่วาด state ลง DOM
    ========================================================================== */
 (function () {
   const $ = id => document.getElementById(id);
@@ -11,21 +11,29 @@
   const human = 'p0', aiSide = 'p1';
   const board = $('board');
   const COL = ['A', 'B', 'C'];
-  const cname = (r, c) => (r + 1) + COL[c];
+  const cellName = (r, c) => (r + 1) + COL[c];
+  const FACTION_ICON = { Green: 'verdant', Blue: 'aegis', Red: 'ashen', Purple: 'nyx-horizon', Yellow: 'thronis', Colorless: 'aegis' };
+  const FRAME = { unit: 'assets/ui/frame-unit.png', command: 'assets/ui/frame-unit.png', terrain: 'assets/ui/frame-terrain.png', arcanum: 'assets/ui/frame-unit.png', token: 'assets/ui/frame-unit.png' };
+  const PHASE_ICON = { draw: 'assets/ui/icon-phase-draw.png', main: 'assets/ui/icon-phase-main.png', end: 'assets/ui/icon-phase-end.png' };
+  const PHASE_TXT = { draw: 'DRAW Phase', main: 'MAIN Phase', end: 'END Phase' };
+  const artOf = cd => 'assets/art/' + cd.file + '.jpg';
+  /* url ใน custom property ถูก resolve เทียบกับไฟล์ CSS → ฝังเป็น absolute จาก baseURI ของเอกสาร */
+  const urlVar = p => 'url("' + new URL(p, document.baseURI).href + '")';
+  const kindLine = cd => ({ unit: 'UNIT', command: 'COMMAND', terrain: 'TERRAIN', token: 'TOKEN', arcanum: 'ARCANUM' })[cd.type] || 'CARD';
 
-  const U = {
-    S: null, sel: null, busy: false, logAt: 0, respResolve: null,
+  const UI = {
+    S: null, sel: null, busy: false, logAt: 0, respResolve: null, pick: null, fieldTheme: 'blue',
     hl: { move: [], atk: [], cells: [], targets: [] },
   };
 
-  /* ------------------------------------------------- board skeleton */
+  /* ------------------------------------------------- กระดาน */
   function buildBoard() {
     board.innerHTML = '';
-    for (let r = 0; r < R.rows; r++) {                      // บนสุด = แถว 1 (หลังศัตรู), ล่างสุด = แถว 5 (หลังคุณ)
+    for (let r = 0; r < R.rows; r++) {
       for (let c = 0; c < R.cols; c++) {
         const cell = el('div', 'cell' + (r === R.coreRow ? ' core' : (r < R.coreRow ? ' foe' : ' own')));
         cell.dataset.r = r; cell.dataset.c = c;
-        cell.appendChild(el('span', 'coord', cname(r, c)));
+        cell.appendChild(el('span', 'coord', cellName(r, c)));
         cell.appendChild(el('div', 'terr'));
         cell.appendChild(el('div', 'tkslot'));
         cell.addEventListener('click', () => onCell(r, c));
@@ -37,82 +45,105 @@
 
   /* ------------------------------------------------- render */
   function render() {
-    const S = U.S; if (!S) return;
+    const S = UI.S; if (!S) return;
     const p = S.players[human], q = S.players[aiSide];
-    $('turnChip').innerHTML = `เทิร์น ${p.myTurns}/${q.myTurns} · <b>${S.active === human ? 'ตาคุณ' : 'ตา AI'}</b>` + (S.phase !== 'main' ? ` · ${S.phase}` : '');
-    $('turnChip').classList.toggle('mine', S.active === human && !U.busy);
+    $('buildTag').textContent = R.version;
+    $('phaseChip').innerHTML = `<img src="${PHASE_ICON[S.phase] || PHASE_ICON.main}" alt="">${PHASE_TXT[S.phase] || 'MAIN Phase'}`;
+    $('phaseChip').classList.toggle('mine', S.active === human);
 
-    plate(q, 'Foe', { deck: 'foeDeck', out: 'foeOut', rem: 'foeRem', extra: 'foeExtra', units: 'foeUnits', terr: 'foeTerr', hand: 'foeHand' });
-    plate(p, 'Own', { deck: 'ownDeck', out: 'ownOut', rem: 'ownRem', extra: 'ownExtra', units: 'ownUnits', terr: 'ownTerr' });
-    coreTrack($('foePts'), q.corePoints); coreTrack($('ownPts'), p.corePoints);
-    flarePips($('foeFlare'), q, S.active === aiSide); flarePips($('ownFlare'), p, S.active === human);
-    $('foeName').textContent = q.deckName; $('ownName').textContent = p.deckName;
-    $('handCount').textContent = `${p.hand.length}/${R.handMax}`;
+    plate(q, 'foe'); plate(p, 'own');
+    pips($('railOwn'), p, S.active === human); pips($('railFoe'), q, S.active === aiSide);
+    $('foeAvatar').src = 'assets/faction/' + (FACTION_ICON[q.faction] || 'aegis') + '.png';
+    $('ownAvatar').src = 'assets/faction/' + (FACTION_ICON[p.faction] || 'verdant') + '.png';
 
-    /* cells */
     for (let r = 0; r < R.rows; r++) for (let c = 0; c < R.cols; c++) {
-      const ce = cellEl(r, c), slot = ce.querySelector('.tkslot'), terr = ce.querySelector('.terr');
-      const x = S.cells[r][c];
+      const ce = cellEl(r, c), slot = ce.querySelector('.tkslot'), terr = ce.querySelector('.terr'), x = S.cells[r][c];
       ce.className = 'cell' + (r === R.coreRow ? ' core' : (r < R.coreRow ? ' foe' : ' own'));
-      if (U.hl.cells.some(k => k.r === r && k.c === c)) ce.classList.add('hl-cell');
-      if (U.hl.move.some(k => k.r === r && k.c === c)) ce.classList.add('hl-move');
+      if (UI.hl.cells.some(k => k.r === r && k.c === c)) ce.classList.add('hl-cell');
+      if (UI.hl.move.some(k => k.r === r && k.c === c)) ce.classList.add('hl-move');
       slot.innerHTML = ''; terr.innerHTML = '';
       if (x.terrain) {
         const tcd = card(x.terrain.id);
-        const ct = COLORS[tcd.color ? tcd.color.toLowerCase() : 'colorless'] || { tone: '#9fb4d8' };
-        terr.innerHTML = `<span class="t-chip" style="color:${ct.tone};border-color:${ct.tone}55">▦ ${tcd.name}</span>`;
+        terr.innerHTML = `<span class="t-chip ${x.terrain.side === human ? '' : 'foe'}">▦ ${tcd.name}</span>`;
       }
       const u = x.unit;
-      if (u) {
-        if (U.hl.targets.includes(u.uid)) ce.classList.add('hl-target');
-        if (U.hl.atk.some(k => k.r === r && k.c === c)) ce.classList.add('hl-atk');
-        const cd = card(u.id);
-        const tk = el('div', 'tk ' + (u.side === human ? 'own' : 'foe') + (u.rested ? ' rested' : '') + (u.arc ? ' arc' : '') +
-          (U.sel && U.sel.kind === 'unit' && U.sel.uid === u.uid ? ' sel' : ''));
-        tk.style.setProperty('--art', 'url(' + cd.art + ')');
-        tk.innerHTML = `<span class="tk-art"></span><span class="tk-cp">${Z.effCp(S, u).toLocaleString()}</span>
-          <span class="tk-name" title="${cd.name}">${cd.name}</span>
-          <span class="tk-tag">${u.arc ? 'ARC' : cd.type === 'token' ? 'TKN' : (u.fused && u.fused.length ? 'FUSED ' + u.fused.length : '')}</span>
-          ${u.dmg ? `<span class="tk-dmg">-${u.dmg.toLocaleString()}</span>` : ''}`;
-        slot.appendChild(tk);
-      }
+      if (!u) continue;
+      if (UI.hl.atk.some(k => k.r === r && k.c === c)) ce.classList.add('hl-atk');
+      if (UI.hl.targets.includes(u.uid)) ce.classList.add('hl-target');
+      const cd = card(u.id);
+      const tk = el('div', 'tk ' + (u.side === human ? 'own' : 'foe') + (u.rested ? ' rested' : '') + (u.arc ? ' arc' : '') +
+        (UI.sel && UI.sel.kind === 'unit' && UI.sel.uid === u.uid ? ' sel' : ''));
+      tk.style.setProperty('--art', urlVar(artOf(cd)));
+      tk.innerHTML = `<span class="tk-art"></span><span class="tk-cp">${Z.effCp(S, u).toLocaleString()}</span>
+        <span class="tk-name" title="${cd.name}">${cd.name}</span>
+        <span class="tk-tag">${u.arc ? 'ARC' : cd.type === 'token' ? 'TOKEN' : (u.fused && u.fused.length ? 'FUSED ×' + u.fused.length : (cd.tribe || ''))}</span>
+        ${u.dmg ? `<span class="tk-dmg">-${u.dmg.toLocaleString()}</span>` : ''}`;
+      slot.appendChild(tk);
     }
 
-    /* hand */
-    const hand = $('hand'); hand.innerHTML = '';
+    hand(p);
+    const selU = UI.sel && UI.sel.kind === 'unit' ? S.cards[UI.sel.uid] : null;
+    $('btnAbility').classList.toggle('hidden', !(selU && (card(selU.id).abilities || []).some(a => a.kw === 'Activate')));
+    $('btnAbility').disabled = !canAct(S, selU);
+    $('btnEnd').disabled = S.active !== human || UI.busy || !!S.pending;
+    $('btnCancel').disabled = !UI.sel;
+    renderLog(); renderResponse();
+  }
+  
+
+  const set = (id, v) => { const e = $(id); if (e) e.textContent = v; };
+  function plate(p, who) {
+    const S = UI.S;
+    set(who + 'Name', p.deckName);
+    set(who + 'Pts', p.corePoints);
+    set(who + 'FlareN', p.flare);
+    set(who + 'Hand', p.hand.length);
+    set(who + 'DeckN', p.deck.length);
+    set(who + 'Deck', p.deck.length);
+    set('foeOutN', p.outzone.length); set('foeRemN', p.remove.length); set('foeExtraN', p.extra.length);
+    set('ownOutN', p.outzone.length); set('ownOutN2', p.outzone.length);
+    set('ownRemN', p.remove.length); set('ownExtraN', p.extra.length);
+    if (who === 'own') {
+      set('ownUnits', Z.units(S, human).length + '/' + R.unitLimit);
+      set('ownTerr', Z.terrains(S, human).length + '/' + Z.terrainLimit(S, human));
+      set('handLabel', 'มือ : ' + p.hand.length);
+    }
+  }
+
+  function pips(rail, p, live) {
+    const box = rail.querySelector('.pips');
+    box.innerHTML = '';
+    const n = Math.max(R.flareMax, p.flare);
+    for (let i = 0; i < n; i++) box.appendChild(el('i', i < p.flare ? 'on' : ''));
+    rail.querySelector('.rail-cap').innerHTML = `<img src="assets/ui/icon-flare.png" alt="Flare"><b>${p.flare}</b>`;
+    rail.classList.toggle('live', live);
+  }
+
+  function hand(p) {
+    const S = UI.S, box = $('hand'); box.innerHTML = '';
+    box.style.setProperty('--n', Math.max(1, p.hand.length));
     p.hand.forEach((id, i) => {
       const cd = card(id);
       const info = Z.cardPlayable(S, human, i);
-      const bad = !info || !info.ok;
-      const cinfo = COLORS[cd.color ? cd.color.toLowerCase() : 'colorless'] || { name: cd.color, tone: '#9fb4d8' };
-      const n = el('button', 'gcard type-' + cd.type + ' col-' + (cd.color || 'Colorless').toLowerCase() +
-        (U.sel && ((U.sel.kind === 'hand' && U.sel.idx === i) || (U.sel.kind === 'command' && U.sel.idx === i)) ? ' sel' : '') +
-        (bad || S.active !== human || U.busy || S.pending ? ' dim' : ''));
-      n.innerHTML = `<span class="gc-cost"><i>${cd.cost}</i></span>
-        <span class="gc-type">${({ unit: 'UNIT', command: 'COMMAND', terrain: 'TERRAIN', token: 'TOKEN', arcanum: 'ARCANUM' })[cd.type] || cd.type}</span>
-        <img class="gc-art" loading="lazy" src="${cd.art}" alt="" onerror="this.classList.add('noart')">
-        <span class="gc-name">${cd.name}</span>
-        ${cd.cp ? `<span class="gc-cp">CP ${cd.cp.toLocaleString()}</span>` : ''}
-        <span class="gc-fac" style="color:${cinfo.tone}">${cd.color} · ${cd.tribe || '—'}${cd.protection ? ' · [Protection]' : ''}</span>
-        <span class="gc-ab">${(cd.abilities || []).map(a => `<em>${a.kw}</em> ${a.text}`).join('') || ((cd.flags && cd.flags.stride) ? '<em>Move</em> Can move 2 spaces.' : '')}</span>`;
-      const ib = el('span', 'gc-info', 'i');
-      ib.addEventListener('click', ev => { ev.stopPropagation(); showCard(cd.id); });
-      n.title = cd.name + ' · ' + cd.type + ' · Cost ' + cd.cost + (cd.cp ? ' · Power ' + cd.cp.toLocaleString() : '');
-      n.appendChild(ib);
+      const off = !info || !info.ok || S.active !== human || UI.busy || S.pending;
+      const n = el('button', 'gcard cost-ring col-' + (cd.color || 'Colorless').toLowerCase() + ' type-' + cd.type +
+        (UI.sel && ((UI.sel.kind === 'hand' && UI.sel.idx === i) || (UI.sel.kind === 'command' && UI.sel.idx === i)) ? ' sel' : '') + (off ? ' dim' : ''));
+      n.style.setProperty('--art', urlVar(artOf(cd)));
+      n.innerHTML = `<span class="art-win"></span>
+        <img class="frame-fill" src="${FRAME[cd.type] || FRAME.unit}" alt="">
+        <span class="cost-hole">${cd.cost}</span>
+        <span class="kind-hole">${kindLine(cd)}</span>
+        ${cd.cp ? `<span class="cp-hole">${cd.cp.toLocaleString()}</span>` : ''}
+        <span class="name-hole">${cd.name}</span>
+        <span class="tri-hole">${cd.color} · ${cd.tribe || '—'}</span>
+        <span class="footy">${(cd.abilities || []).map(a => `<em>${a.kw}</em>`).join('')}</span>
+        <span class="txt-hole">${(cd.abilities || []).map(a => a.text).join(' ') || '—'}${(cd.abilities || []).length > 1 ? '<span class="tip">แตะ i เพื่อดูครบทุกข้อ</span>' : ''}</span>
+        ${cd.protection ? '<span class="prote">PROTECTION</span>' : ''}
+        <span class="info-hole">i</span>`;
+      n.querySelector('.info-hole').addEventListener('click', ev => { ev.stopPropagation(); showCard(cd.id); });
       n.addEventListener('click', ev => { ev.stopPropagation(); onHand(i); });
-      hand.appendChild(n);
+      box.appendChild(n);
     });
-
-    /* buttons state */
-    const selU = U.sel && U.sel.kind === 'unit' ? S.cards[U.sel.uid] : null;
-    const hasAct = selU && (card(selU.id).abilities || []).some(a => a.kw === 'Activate');
-    $('btnAbility').classList.toggle('hidden', !hasAct);
-    $('btnAbility').disabled = !canAct(S, selU);
-    $('btnArc').disabled = !Z.arcPlayable(S, human).ok || S.active !== human || U.busy || S.pending;
-    $('btnEnd').disabled = S.active !== human || U.busy || !!S.pending;
-    $('btnCancel').disabled = !U.sel;
-    renderLog();
-    renderResponse();
   }
 
   function canAct(S, u) {
@@ -123,165 +154,192 @@
     return !ab.cost || S.players[human].flare >= ab.cost;
   }
 
-  function plate(p, who, ids) {
-    $(ids.deck).textContent = p.deck.length;
-    $(ids.out).textContent = p.outzone.length;
-    $(ids.rem).textContent = p.remove.length;
-    $(ids.extra).textContent = p.extra.filter(x => !x.used).length + '/' + R.extraZoneMax;
-    $(ids.units).textContent = Z.units(U.S, p.side).length + '/' + R.unitLimit;
-    $(ids.terr).textContent = Z.terrains(U.S, p.side).length + '/' + Z.terrainLimit(U.S, p.side);
-    if (ids.hand) $(ids.hand).textContent = p.hand.length;
-  }
-  function coreTrack(node, n) {
-    const lab = node.querySelector('.cp-label');
-    node.innerHTML = ''; if (lab) node.appendChild(lab);
-    for (let i = 0; i < R.corePointsToWin; i++) node.appendChild(el('i', 'pt' + (i < n ? ' on' : '')));
-    node.appendChild(el('b', null, n + '/' + R.corePointsToWin));
-  }
-  function flarePips(node, p, active) {
-    node.innerHTML = '';
-    for (let i = 0; i < R.flareMax; i++) node.appendChild(el('i', 'fl' + (i < p.flare ? ' on' : '') + (i === R.flareMax - 1 && p.arcFlareReady ? ' arc' : '')));
-    node.appendChild(el('b', null, 'FLARE ' + p.flare));
-    node.classList.toggle('live', active);
-  }
-
+  /* ---------------- log ---------------- */
   function renderLog() {
-    const S = U.S, lb = $('logBody');
-    while (U.logAt < S.log.length) {
-      const L = S.log[U.logAt++];
+    const S = UI.S, lb = $('logBody');
+    while (UI.logAt < S.log.length) {
+      const L = S.log[UI.logAt++];
       lb.appendChild(el('div', 'lg ' + L.kind + (L.p && L.p !== human ? ' foe' : ''), `<span>${L.t}</span><em>${L.msg}</em>`));
     }
     if (lb.children.length > 500) lb.removeChild(lb.firstChild);
     lb.scrollTop = lb.scrollHeight;
   }
 
-  /* ------------------------------------------------- response window */
+  /* ---------------- banner (ตาใคร / เฟส) ---------------- */
+  async function banner(text, foe_, ms) {
+    const b = $('banner');
+    b.className = 'banner show' + (foe_ ? ' foe' : '');
+    b.innerHTML = `<span>${text}</span>`;
+    await sleep(ms || 900);
+    b.className = 'banner';
+  }
+
+  /* ---------------- Declaration-Response ---------------- */
   function renderResponse() {
-    const S = U.S, bar = $('guardBar');
+    const S = UI.S, bar = $('guardBar');
     if (!S.pending || S.pending.responder !== human) { bar.classList.add('hidden'); $('guardVeil').classList.add('hidden'); return; }
     const ev = S.pending.ev, actor = S.players[ev.actor], p = S.players[human];
     const desc = { deploy: 'ลงยูนิต', command: 'ใช้ Command', terrain: 'วาง Terrain', move: 'เคลื่อนยูนิต', attack: 'โจมตี', ability: 'ใช้ความสามารถ', summonArc: 'เรียก Arcanum' }[ev.kind] || ev.kind;
-    $('guardTitle').innerHTML = `<b>Declaration-Response</b> — ${actor.deckName} ${desc}` +
-      (ev.tgt ? ` ใส่ [${card(ev.tgt.id).name}]` : '') + ` · คุณตอบโต้ได้ 1 ครั้ง`;
+    $('guardTitle').textContent = `${actor.deckName} ${desc}` + (ev.tgt ? ` → [${card(ev.tgt.id).name}]` : '') + ' · ตอบโต้ได้ 1 ครั้ง';
     const box = $('guardOpts'); box.innerHTML = '';
     S.pending.opts.forEach(i => {
       const cd = card(p.hand[i]);
-      const b = el('button', 'guard-opt', `${cd.name} <i>(Flare ${cd.cost})</i> ${(cd.abilities || [])[0] ? (cd.abilities[0].text) : ''}`);
+      const ab = (cd.abilities || []).find(a => a.kw === 'Counter' || a.kw === 'Quick-Cast') || (cd.abilities || [])[0];
+      const b = el('button', 'guard-opt', `${cd.name} <em>Flare ${cd.cost} · ${ab ? ab.text : ''}</em>`);
       b.disabled = cd.cost > p.flare;
       b.addEventListener('click', () => doRespond(i));
       box.appendChild(b);
     });
-    const pass = el('button', 'guard-opt pass', 'ผ่าน (ไม่ตอบโต้)');
+    const pass = el('button', 'guard-opt pass', 'ผ่าน');
     pass.addEventListener('click', () => doRespond(null));
     box.appendChild(pass);
     bar.classList.remove('hidden'); $('guardVeil').classList.remove('hidden');
   }
   function doRespond(idx) {
-    const S = U.S;
+    const S = UI.S;
     Z.respond(S, idx);
     render();
-    if (U.respResolve) { const r = U.respResolve; U.respResolve = null; r(); }
-    else if (!S.pending && S.active === aiSide && !U.busy && !S.winner) aiGo();   // resume ถ้า AI หยุดคาก้อนหน้าต่างตอบโต้
+    if (UI.respResolve) { const r = UI.respResolve; UI.respResolve = null; r(); }
+    else if (!S.pending && S.active === aiSide && !UI.busy && !S.winner) aiGo();
   }
-  const waitResponse = () => new Promise(res => { U.respResolve = res; });
+  const waitResponse = () => new Promise(res => { UI.respResolve = res; });
 
-  /* ------------------------------------------------- AI driver */
+  /* ---------------- popup เลือกเป้าหมาย (mockup: carousel + ไม่/ใช่) ---------------- */
+  function openPick(title, unitsArr, cb) {
+    UI.pick = { list: unitsArr, i: 0, cb };
+    $('pickTitle').textContent = title;
+    drawPick(); $('pickPanel').classList.remove('hidden'); $('pickVeil').classList.remove('hidden');
+  }
+  function drawPick() {
+    const pk = UI.pick; if (!pk) return;
+    const box = $('pickCards'); box.innerHTML = '';
+    pk.list.forEach((u, i) => {
+      const cd = card(u.id);
+      const w = el('div', 'gcard pc cost-ring col-' + (cd.color || '').toLowerCase() + (i === pk.i ? ' on' : ''));
+      w.style.setProperty('--art', urlVar(artOf(cd)));
+      w.style.setProperty('--cw', '112px');
+      w.innerHTML = `<span class="art-win"></span><img class="frame-fill" src="${FRAME[cd.type]}" alt="">
+        <span class="cost-hole">${cd.cost}</span>
+        ${cd.cp ? `<span class="cp-hole">${(cd.cp || 0).toLocaleString()}</span>` : ''}
+        <span class="name-hole">${cd.name}</span>
+        <span class="tri-hole">${cd.color} · ${u.rested ? 'วางนอน' : 'พร้อมใช้'} · now ${Z.effCp(UI.S, u).toLocaleString()} CP</span>`;
+      w.addEventListener('click', () => { pk.i = i; drawPick(); });
+      box.appendChild(w);
+    });
+    $('pickBar').style.width = (100 * (pk.i + 1) / pk.list.length) + '%';
+  }
+  function closePick(accept) {
+    const pk = UI.pick;
+    const chosen = accept && pk && pk.list && pk.list[pk.i] ? pk.list[pk.i] : null;
+    $('pickPanel').classList.add('hidden'); $('pickVeil').classList.add('hidden');
+    const cb = pk && pk.cb; UI.pick = null; if (cb) cb(chosen);
+  }
+
+  /* ---------------- ตา AI ---------------- */
   async function aiGo() {
-    const S = U.S;
-    U.busy = true; clearSel(); render();
+    const S = UI.S;
+    UI.busy = true; clearSel(); render();
+    await banner(S.active === aiSide ? 'OPPONENT TURN' : 'YOUR TURN', S.active === aiSide, 800);
     let guard = 0;
     while (S.active === aiSide && !S.winner && guard++ < 30) {
-      await sleep(400);
+      await sleep(280);
       const r = ZAI.takeTurn(S, aiSide);
       render();
       if (r === 'pending') { await waitResponse(); continue; }
       if (r === 'done') break;
     }
     if (S.active === aiSide && !S.pending && !S.winner) { Z.endTurn(S); }
-    U.busy = false; render();
+    UI.busy = false; render();
+    if (S.active === human && !S.winner) await banner('YOUR TURN · ' + PHASE_TXT.main, false, 700);
     if (S.winner) maybeOver();
   }
 
-  /* ------------------------------------------------- selection & input */
-  function clearSel() { U.sel = null; U.hl = { move: [], atk: [], cells: [], targets: [] }; hint(defaultHint()); }
-  const defaultHint = () => !U.S ? '' : (U.S.active !== human ? 'AI กำลังคิด…' : 'แตะการ์ดในมือเพื่อลง · แตะunit ของคุณเพื่อเดินหรือโจมตี');
+  /* ---------------- cta หลัก ---------------- */
+  function humanEnd() {
+    const S = UI.S;
+    if (S.active !== human || UI.busy || S.pending) return;
+    clearSel();
+    banner('END PHASE', false, 520);
+    Z.endTurn(S);
+    render(); maybeOver();
+    if (S.winner) return;
+    if (S.active !== human) aiGo();
+  }
+
+  /* ---------------- selection & input ---------------- */
+  function clearSel() { UI.sel = null; UI.hl = { move: [], atk: [], cells: [], targets: [] }; hint(defaultHint()); }
+  const defaultHint = () => !UI.S ? '' : (UI.S.active !== human ? 'AI กำลังคิด…' : 'แตะการ์ดในมือเพื่อลง · แตะunit เพื่อเดิน/โจมตี');
   const hint = t => { $('hint').textContent = t; };
 
   function selectUnit(u) {
-    U.sel = { kind: 'unit', uid: u.uid };
-    U.hl = { move: [], atk: [], cells: [], targets: [] };
-    U.hl.move = Z.legalMoveCells(U.S, u);
-    U.hl.atk = Z.attackTargets(U.S, u).map(t => ({ r: t.r, c: t.c }));
-    U.hl.targets = Z.attackTargets(U.S, u).map(t => t.uid);
+    UI.sel = { kind: 'unit', uid: u.uid };
+    UI.hl = { move: Z.legalMoveCells(UI.S, u), atk: Z.attackTargets(UI.S, u).map(t => ({ r: t.r, c: t.c })), cells: [], targets: Z.attackTargets(UI.S, u).map(t => t.uid) };
     const cd = card(u.id);
-    hint(U.hl.atk.length ? `[${cd.name}] แตะช่องแดงเพื่อโจมตี` : (U.hl.move.length ? `[${cd.name}] แตะช่องเขียวเพื่อเดิน (ใช้แล้วจะวางนอน)` : `[${cd.name}] ไม่มีแอ็คเหลือ (วางนอนแล้วหรือติดบล็อก)`));
+    hint(UI.hl.atk.length ? `[${cd.name}] แตะช่องแดงเพื่อโจมตี` : (UI.hl.move.length ? `[${cd.name}] แตะช่องน้ำเงินเพื่อเดิน` : `[${cd.name}] ไม่มีแอ็ค (วางนอนแล้ว / ถูกจำกัด)`));
   }
+  function deselect() { clearSel(); }
 
   function onHand(i) {
-    const S = U.S;
-    if (S.active !== human || U.busy || S.pending) return;
-    if (U.sel && U.sel.kind === 'hand' && U.sel.idx === i) return clearSel(), render();
+    const S = UI.S;
+    if (S.active !== human || UI.busy || S.pending) return;
+    if (UI.sel && UI.sel.kind === 'hand' && UI.sel.idx === i) { clearSel(); render(); return; }
     const id = S.players[human].hand[i], cd = card(id);
     const info = Z.cardPlayable(S, human, i);
-    if (!info || !info.ok) return hint((info && info.why) || 'ลงการ์ดใบนี้ไม่ได้');
+    if (!info || !info.ok) { hint((info && info.why) || 'ลงการ์ดใบนี้ไม่ได้'); return; }
     if (cd.type === 'command') {
-      const tgt = info.targets || null;
-      U.sel = { kind: 'command', idx: i, targets: tgt };
-      U.hl = { move: [], atk: [], cells: [], targets: tgt ? tgt.map(t => t.uid) : [] };
-      hint(tgt ? `เลือกเป้าหมายของ [${cd.name}]` : `ร่าย [${cd.name}] ?`);
-      if (!tgt) { castCommand(i, null); }
-      render(); return;
+      const tgts = info.targets || null;
+      if (tgts && tgts.length) {
+        UI.sel = { kind: 'command', idx: i };
+        hint('เลือกเป้าหมายในป๊อปอัพแล้วกด “ใช่”');
+        openPick('เลือกเป้าหมายให้ [' + cd.name + ']', tgts, chosen => {
+          if (chosen) castCommand(i, chosen.uid); else { clearSel(); render(); }
+        });
+        return;
+      }
+      castCommand(i, null); render(); return;
     }
-    U.sel = { kind: 'hand', idx: i, type: cd.type };
-    U.hl = { move: [], atk: [], cells: info.cells.slice(), targets: [] };
-    hint(cd.type === 'terrain' ? `เลือกช่องในแถวหน้าเพื่อวาง [${cd.name}]` : `เลือกช่องว่างในแถวหลังเพื่อลง [${cd.name}]`);
+    UI.sel = { kind: 'hand', idx: i, type: cd.type };
+    try { const g = document.querySelectorAll('#hand .gcard')[i]; if (g) g.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' }); } catch (e) { }
+    UI.hl = { move: [], atk: [], cells: info.cells.slice(), targets: [] };
+    hint(cd.type === 'terrain' ? `เลือกช่องแถวหน้าเพื่อวาง [${cd.name}]` : `เลือกช่องแถวหลังเพื่อลง [${cd.name}]`);
     render();
   }
 
   function castCommand(i, tgtUid) {
-    const S = U.S;
-    const res = Z.command(S, human, i, null, tgtUid);
+    const res = Z.command(UI.S, human, i, null, tgtUid);
     clearSel(); render();
     if (res && res.awaiting) hint('อีกฝ่ายกำลังพิจารณาตอบโต้…');
     else if (res && !res.ok) hint(res.why);
   }
 
   async function onCell(r, c) {
-    const S = U.S;
-    if (S.active !== human || U.busy || S.pending) return;
+    const S = UI.S;
+    if (S.active !== human || UI.busy || S.pending) return;
+    const ce = cellEl(r, c); ce.classList.add('flash'); setTimeout(() => ce.classList.remove('flash'), 320);
     const x = S.cells[r][c];
-    /* กำลังเลือกตำแหน่งลงการ์ด */
-    if (U.sel && U.sel.kind === 'hand') {
-      if (!U.hl.cells.some(k => k.r === r && k.c === c)) { hint('ช่องนั้นเลือกไม่ได้'); return; }
-      const i = U.sel.idx;
-      const res = U.sel.type === 'terrain' ? Z.terrain(S, human, i, { r, c }) : Z.deploy(S, human, i, { r, c });
+    if (UI.sel && UI.sel.kind === 'hand') {
+      if (!UI.hl.cells.some(k => k.r === r && k.c === c)) { hint('ช่องนั้นเลือกไม่ได้'); return; }
+      const i = UI.sel.idx;
+      const res = UI.sel.type === 'terrain' ? Z.terrain(S, human, i, { r, c }) : Z.deploy(S, human, i, { r, c });
       clearSel(); render();
       if (res && !res.ok) hint(res.why);
       return;
     }
-    /* กำลังเลือกเป้าหมายให้ Command */
-    if (U.sel && U.sel.kind === 'command') {
-      const t = x.unit;
-      if (!t || !U.hl.targets.includes(t.uid)) { hint('ต้องเลือกunit ที่เป็นเป้าหมายของการ์ด'); return; }
-      castCommand(U.sel.idx, t.uid);
-      return;
-    }
-    /* เลือกunit / เดิน / โจมตี */
     const u = x.unit;
-    if (U.sel && U.sel.kind === 'unit') {
-      const me = S.cards[U.sel.uid];
-      if (!me) return clearSel(), render();
-      if (u && u.side !== human && U.hl.targets.includes(u.uid)) {
+    if (UI.sel && UI.sel.kind === 'unit') {
+      const me = S.cards[UI.sel.uid];
+      if (!me) { clearSel(); render(); return; }
+      if (u && u.side !== human && UI.hl.targets.includes(u.uid)) {
         const res = Z.attack(S, human, me.uid, u.uid);
         clearSel(); render();
-        if (res && res.awaiting) { await waitResponse(); render(); }
+        if (res && res.awaiting) await waitResponse();
         else if (res && !res.ok) hint(res.why);
-        return;
+        render(); return;
       }
-      if (U.hl.move.some(k => k.r === r && k.c === c)) {
+      if (UI.hl.move.some(k => k.r === r && k.c === c)) {
         const res = Z.move(S, human, me.uid, { r, c });
         if (res && res.awaiting) { clearSel(); render(); await waitResponse(); render(); return; }
-        if (res && res.ok) { const after = S.cards[me.uid]; clearSel(); render(); return; }
+        if (res && res.ok) { clearSel(); render(); return; }
         hint(res && res.why ? res.why : 'เดินไม่ได้'); return;
       }
     }
@@ -289,197 +347,137 @@
     clearSel(); render();
   }
 
-  /* ------------------------------------------------- Arcanum panel */
-  function openArcPanel() {
-    const S = U.S, p = S.players[human];
-    const info = Z.arcPlayable(S, human);
-    if (!info.ok) return hint(info.why);
-    const box = $('zvBody'); $('zvTitle').textContent = 'Extra Zone — เรียก Arcanum';
-    box.innerHTML = '';
-    info.options.forEach(o => {
-      const cd = card(o.id);
-      const row = el('button', 'zv-row' + (o.withArc || o.payCost ? '' : ' off'),
-        `<b>${cd.name}</b><span>CP ${cd.cp.toLocaleString()} · Cost ${cd.cost}</span>
-         <em>${o.withArc ? 'ใช้ Arc-Flare (ข้าม Cost, ต้องเป็นแอ็คแรกของเทิร์น)' : o.payCost ? 'จ่าย Flare ' + cd.cost : 'Flare ไม่พอ'}</em>`);
-      row.disabled = !(o.withArc || o.payCost);
-      row.addEventListener('click', () => {
-        $('zoneView').classList.add('hidden');
-        U.sel = { kind: 'arc', extraIdx: o.extraIdx, withArc: o.withArc };
-        U.hl = { move: [], atk: [], cells: info.cells.slice(), targets: [] };
-        hint('เลือกช่องว่างบนสนามเพื่อวาง Arcanum');
-        render();
-      });
-      box.appendChild(row);
-    });
-    $('zoneView').classList.remove('hidden');
-  }
-
-  /* ต่อเคสเลือกช่องให้ Arcanum ใน onCell */
-  const _onCell = onCell;
-  onCell = async function (r, c) {
-    const S = U.S;
-    if (S && U.sel && U.sel.kind === 'arc') {
-      if (!U.hl.cells.some(k => k.r === r && k.c === c)) return hint('ช่องนั้นวางไม่ได้');
-      const s = U.sel;
-      const res = Z.summonArc(S, human, s.extraIdx, { r, c }, s.withArc);
-      clearSel(); render();
-      if (res && res.awaiting) await waitResponse();
-      else if (res && !res.ok) hint(res.why);
-      render(); return;
-    }
-    return _onCell(r, c);
-  };
-
+  /* ---------------- ชีรายละเอียดการ์ด ---------------- */
   function showCard(id) {
     const cd = card(id);
     $('zvTitle').textContent = cd.name;
-    const ci = COLORS[cd.color ? cd.color.toLowerCase() : 'colorless'] || { name: cd.color, tone: '#9fb4d8' };
     $('zvBody').innerHTML = `<div class="card-sheet">
-      <img class="cs-art" src="${cd.art}" alt="${cd.name}" loading="lazy">
-      <div class="cs-head"><b>${cd.type.toUpperCase()}</b><span style="color:${ci.tone}">${ci.name} · ${cd.tribe || '—'}</span>
-        <i class="cs-cost">Cost ${cd.cost}</i>${cd.cp ? `<i class="cs-cp">CP ${cd.cp.toLocaleString()}</i>` : ''}</div>
-      <div class="cs-tags">${cd.protection ? '<em>Protection</em>' : ''}${(cd.flags || []).map(f => `<em class="fl">${f}</em>`).join('')}${(cd.cellEffects || []).length ? '<em class="fl">cell effect x' + cd.cellEffects.length + '</em>' : ''}
-        <em>Trigger-line: ${(cd.abilities || []).some(a => a.kw === 'Trigger') ? 'มี' : 'ไม่มี'}</em></div>
-      ${(cd.abilities || []).map(a => `<div class="cs-ab"><span>${a.kw}${a.when ? ' ⟨' + a.when + '⟩' : ''}</span>
-        <em class="st ${a.ops && a.ops.length ? 'ok' : 'partial'}">${a.ops && a.ops.length ? 'engine ต่อผลอัตโนมัติแล้ว (' + a.ops.map(o => o.op).join('+') + ')' : 'แสดงข้อความอย่างเดียว — ผลยังไม่ต่ออัตโนมัติ'}</em>
-        <p>${a.text}${a.cost ? ` (cost ${a.cost} Flare)` : ''}${a.once ? ' · [Once per turn]' : ''}</p></div>`).join('') || '<div class="cs-ab"><span>Body</span><p>ไม่มีผลพิเศษ เป็นยูนิตมาตรฐาน</p></div>'}
-    </div>`;
+      <div class="cs-artbox"><img class="cs-scan" src="${cd.art}" alt="${cd.name}"></div>
+      <div>
+        <div class="cs-head"><b>${kindLine(cd)}</b><span>${cd.color || 'Colorless'}${cd.tribe ? ' · ' + cd.tribe : ''}</span>
+          <i class="cs-cost">Cost ${cd.cost}</i>${cd.cp ? `<i class="cs-cp">${cd.cp.toLocaleString()} CP</i>` : ''}</div>
+        <div class="cs-tags">${cd.protection ? '<em>Protection</em>' : ''}<em>${(cd.abilities || []).length} abilities</em>
+          ${(cd.flags || []).map(f => `<em class="fl">${f}</em>`).join('')}
+          ${(cd.cellEffects || []).length ? `<em class="fl">ผลบนช่อง ×${cd.cellEffects.length}</em>` : ''}</div>
+        ${(cd.abilities || []).map(a => `<div class="cs-ab"><span>${a.kw}${a.when ? ' ⟨' + a.when + '⟩' : ''}</span>
+          <em class="st ${a.ops && a.ops.length ? 'ok' : 'partial'}">${a.ops && a.ops.length ? 'engine ต่อผลแล้ว: ' + a.ops.map(o => o.op).join('+') : 'แสดงข้อความอย่างเดียว — ยังไม่ต่อผลอัตโนมัติ'}</em>
+          <p>${a.text}${a.cost ? ` (cost ${a.cost} Flare)` : ''}${a.once ? ' · [Once per turn]' : ''}</p></div>`).join('') || '<div class="cs-ab"><span>Body</span><p>ไม่มีความสามารถ</p></div>'}
+      </div></div>`;
     $('zoneView').classList.remove('hidden');
   }
 
-  /* ------------------------------------------------- zone viewer */
   function openZone(side, zone, label) {
-    const S = U.S, p = S.players[side];
-    const ids = zone === 'extra' ? p.extra.map(e => (e.used ? e.id + (card(e.id) ? '' : '') : e.id)) : p[zone];
+    const p = UI.S.players[side];
     $('zvTitle').textContent = label;
-    const box = $('zvBody'); box.innerHTML = '';
     const list = {};
-    (zone === 'extra' ? p.extra.map(e => ({ id: e.id, used: e.used })) : (p[zone] || []).map(id => ({ id, used: false }))).forEach(e => {
-      const cd = card(e.id); if (!cd) return;
-      const k = cd.name + (e.used ? ' (ใช้แล้ว)' : '');
-      list[k] = (list[k] || 0) + 1;
-    });
+    (p[zone] || []).forEach(id => { const cd = card(id); if (!cd) return; const k = cd.name + ' · ' + cd.color; list[k] = (list[k] || 0) + 1; });
     const keys = Object.keys(list);
-    box.innerHTML = keys.length ? keys.map(k => `<div class="zv-row"><b>${k}</b><span>×${list[k]}</span></div>`).join('') : '<div class="zv-row off">ว่าง</div>';
+    $('zvBody').innerHTML = keys.length ? keys.map(k => `<div class="zv-row"><b>${k}</b><span>×${list[k]}</span></div>`).join('') : '<div class="zv-row off">ว่าง</div>';
     $('zoneView').classList.remove('hidden');
   }
 
-  /* ------------------------------------------------- rulebook / catalog */
+  /* ---------------- กติกา / คาตาล็อก / แหล่งข้อมูล ---------------- */
   const ASSUMPTIONS = `
-    <section><h3>ชุดการ์ดที่ import แล้ว</h3><p>SB01 (22) · SD01 (15) · SD04 (15) — รวม 52 ใบ แสดงผลจริง: ${CARDS.filter(c => c.abilities && c.abilities.length).length} ใบมีการเล่นที่ engine ต่อไว้ / ${CARDS.reduce((a, c) => a + (c.abilities || []).filter(x => (x.ops || []).length).length, 0)} ความสามารถที่มีผลทำงานอัตโนมัติ · Terrain มีผลบนช่อง: ${CARDS.filter(c => c.cellEffects && c.cellEffects.length).length} ใบ · ยังไม่มี Arcanum/Token ใน 3 ชุดนี้</p></section>
-    <section class="warn"><h3>ข้อสมมติที่ต้องยืนยัน</h3>
-    <p>1) การโจมตีจ่าย <b>1 Flare</b> / การเคลื่อนที่ฟรี (จากตัวอย่าง Lava Stream ที่ว่า "โจมตีได้โดยไม่ใช้ Flare")<br>
-    2) เคลื่อนที่ 1 ช่อง/แอ็ค (การ์ดติด <code>stride</code> = 2 ช่อง) และใช้แอ็คได้ 1 ครั้งต่อเทิร์นด้วยการ "วางนอน"<br>
-    3) ผู้ที่เริ่มทีหลังไม่จั่วเทิร์นแรก (ตาม rulebook) — ผลทดสอบ AI vs AI ฝ่ายเริ่มก่อนชนะ ~80% ต้องการตัวชดเชยไหม?<br>
-    4) ผลแบบ [Counter] ของยูนิตทำงานก่อน [Attack] และ Command ตอบโต้ใช้ Flare ของผู้ตอบโต้<br>
-    5) Effect ของอีกฝ่ายทำงานหลังเจ้าของเทิร์นเสมอ และ digital build ให้ resolve อัตโนมัติ (ไม่มีการเลือกลำดับแบบกระดาษ)</p></section>`;
+    <section class="warn"><h3>ข้อสมมติที่ยังรอ owner ยืนยัน</h3>
+    <p>1) โจมตีใช้ <b>1 Flare</b> / เดินฟรี 1 ช่องต่อแอ็ค (อิงตัวอย่าง "โจมตีได้โดยไม่ใช้ Flare")<br>
+    2) ผู้เริ่มทีหลังไม่จั่วเทิร์นแรก (ตาม rulebook) — วัดจริงฝ่ายเริ่มก่อนชนะ ~80% ต้องมีตัวชดเชยไหม<br>
+    3) <code>[Counter]</code> ของยูนิต resolve ก่อน <code>[Attack]</code> และใช้ Flare ของผู้ตอบโต้<br>
+    4) build นี้ digital-resolve เรียงลำดับอัตโนมัติ (เจ้าของเทิร์นก่อน ตามด้วย type Core&gt;Front&gt;Back ซ้ายก่อนขวา)<br>
+    5) <b>ยังไม่มี Arcanum / Arc-Flare</b> ตามที่สั่ง — Extra Zone ยังแสดงได้ แต่ไม่มีสำหรับเรียก Arcanum</p></section>`;
 
   const RULESUM = () => `
-  <h2>Zonefall — สรุปกติกาที่ใช้ในbuildนี้ <small>${R.version} · การ์ดจริง ${CARDS.length} ใบ</small></h2>
+  <h2>กติกา — Zonefall <small>${R.version}</small></h2>
   <div class="rb">
-    <section><h3>เป้าหมาย</h3><p>สะสม <b>${R.corePointsToWin} Core Point</b> ให้ก่อน — ได้จากจำนวนการ์ดที่คุณควบคุมใน <b>Core Zone (แถว 3)</b> ตอน End Phase ใบละ 1 แต้ม · อีกทางชนะคือให้เด็คศัตรูหมด (จั่วไม่ได้ = แพ้ทันที)</p></section>
-    <section><h3>สนาม ${R.rows}×${R.cols}</h3><p>แถว 1 = Back row ของผู้เล่นบน · แถว 2 = Front row · <b>แถว 3 = Core Zone</b> · แถว 4–5 เป็นของผู้เล่นล่าง · ลงยูนิต/Command ได้เฉพาะแถวหลังของตัวเอง, Terrain วางแถวหน้าของตัวเอง, ห้ามรุกล้ำแถวหลังศัตรู</p></section>
-    <section><h3>Flare (ทรัพยากร)</h3><p>ต้นเทิร์นได้ Flare = เลขเทิร์นของตัวเอง สูงสุด ${R.flareMax} และไม่สะสมข้ามเทิร์น · ใช้ลงยูนิต/ร่าย Command/วาง Terrain/เรียก Arcanum · เมื่อ Flare ถึง ${R.flareMax} เม็ดที่ 8 เป็น <b>Arc-Flare</b> — ใช้ 1 หน่วยเป็นแอ็คแรกของเทิร์นเพื่อเรียก Arcanum โดยข้าม Cost ทั้งก้อน</p></section>
-    <section><h3>การกระทำ (Main Phase)</h3><p>ทำไร่อิสระ ไม่มีการลำดับตายตัว: ลงการ์ด / เดิน / โจมตี / ใช้ Activate / วาง Terrain · ยูนิต 1 ใบใช้แอ็คได้เมื่อ "วางนอน" (1 แอ็คต่อเทิร์น จนกว่าการ์ดจะสั่งให้กลับตั้ง) · จำกัดยูนิตฝ่ายละ ${R.unitLimit} ตัว · Terrain ฝ่ายละ ${R.terrainLimitBase} ใบ (เพิ่มได้จากlimit +1) · Terrain ไม่ใช่กำแพง ยูนิตเดินผ่าน/ยืนทับได้</p></section>
-    <section><h3>การเคลื่อนที่</h3><p>ซ้าย/ขวา/หน้า/หลัง, ห้ามเข้าหรือข้ามช่องที่มีunit ฝ่ายเดียวกันหรือศัตรู, Terrain ไม่บล็อก · Arcanum ไม่เคลื่อนที่ไม่โจมตี</p></section>
-    <section><h3>การต่อสู้</h3><p>ประกาศโจมตี (จ่าย ${R.attackFlare} Flare ยกเว้นอยู่ในช่อง/Lava Stream หรือใบที่ระบุว่ายิงฟรี) → <b>Declaration-Response</b> (อีกฝ่ายตอบโต้ได้ 1 ครั้ง) → ความสามารถ Counter ของผู้ป้องกัน → ความสามารถ Attack ของผู้โจมตี → <b>วัดค่าพลัง</b>: เอา CP ผู้โจมตีไปลบ CP ผู้ป้องกัน เหลือ 0 = ถูกทำลายส่งไป Outzone · ผู้โจมตีไม่เสีย CP · ค่าพลังรีเซ็ตต้นเทิร์น (Persistent Power / Playtest Ver.2)</p></section>
-    <section><h3>Declaration-Response</h3><p>ทุกแอ็คที่ประกาศ สร้างหน้าต่างตอบโต้ 1 ครั้งให้อีกฝ่าย (Command ที่เป็น [Counter] / Quick-Cast เท่านั้น เช่น Null Magic = Cancel ทั้งแอ็ค) · ไม่มีการ chain/สแต็ก · ความสามารถowner ของเทิร์น resolve ก่อนเสมอ</p></section>
-    <section><h3>End Phase</h3><p>นับ Core Point จาก Core Zone → อีกฝ่าย <b>Trigger Check</b> 1 ใบ (เปิดใบบนสุดของเด็คขึ้นมือ; ถ้ามี [Trigger] จะทำงานทันที) → Terrain ที่ระบุให้สลายตัวเอง → เช็คนับแต้มครบ ${R.corePointsToWin} → ส่งเทิร์น</p></section>
-    <section><h3>โซนอื่น</h3><p>Outzone = การ์ดที่ถูกทำลาย/ใช้แล้ว · Removezone = ออกจากเกม (เช่น มือเกิน ${R.handMax} ใบ) · Extra Zone = Token + Arcanum (ดิจิทัล ${R.extraZoneMax} ใบ, Arcanum ที่ถูกทำลายจะหงายหน้าและใช้ไม่ได้อีก)</p></section>
-    <section><h3>การจัดเด็ค</h3><p>${R.deckMin}–${R.deckMax} ใบ, ซ้ำไม่เกิน ${R.maxCopy} ใบ, สีหลักอย่างน้อยครึ่งเด็ค, [Protection] รวมไม่เกิน 6 ใบ, เริ่มต้น 4 ใบ (มูวกันได้ — ในbuildนี้ยังไม่มี)</p></section>
+    <section><h3>เป้าหมาย</h3><p>สะสม <b>${R.corePointsToWin} Core Point</b> ให้ก่อน · ได้จากจำนวนการ์ดที่คุณครองใน <b>Core Zone (แถว ${R.coreRow + 1})</b> ตอน End Phase ใบละ 1 แต้ม · ทางที่สอง: ทำให้อีกฝ่าย<b>จั่วไม่ได้</b> (เด็คหมด = แพ้ทันที)</p></section>
+    <section><h3>สนาม 5×3</h3><p>แถว 1–5 จากฝั่งศัตรูบนสุดถึงแถวหลังคุณ · แถว 3 = <b>Core Zone</b> (พื้นน้ำเงิน) · ลงยูนิต/Command ได้เฉพาะแถวหลังตนเอง · Terrain วางแถวหน้าตนเอง · <b>ห้ามเข้าแถวหลังศัตรู</b></p></section>
+    <section><h3>Flare (ทรัพยากร)</h3><p>แต่ละฝ่ายเริ่มต้นที่ <b>${R.flareStart} Flare</b> แล้ว += 1 ทุกเทิร์นของคุณจนถึงเพดาน <b>${R.flareMax}</b> · <b>ไม่สะสมข้ามเทิร์น</b> · ใช้ลงการ์ด/ร่าย Command/วาง Terrain/Activate และโจมตี · แถวเม็ดไดมอนด์ที่ขอบสนามคือ Flare คงเหลือของสองฝั่ง</p></section>
+    <section><h3>"วางนอน" = ใช้แอ็ค</h3><p>ยูนิต 1 ตัวทำอะไรได้ 1 อย่างต่อเทิร์น (เดิน / โจมตี) โดยการเปลี่ยนจากวางตั้งเป็นวางนอน · ลงสนามเทิร์นเดียวกันโจมตีได้เลยถ้ามี Flare · เดินแล้วค่อยโจมตีก็ได้ (เดินฟรี 1 ช่อง)</p></section>
+    <section><h3>การต่อสู้</h3><p>โจมตีได้เฉพาะช่อง <b>หน้า / ซ้าย / ขวา</b> · ประกาศ → อีกฝ่าย<b>ตอบโต้ 1 ครั้ง</b> → <code>Counter</code> ผู้ป้องกัน → <code>Attack</code> ผู้โจมตี → วัดค่าพลัง: CP ผู้โจมตีไปลบ CP ผู้ป้องกัน <b>เหลือ 0 = ล้ม → Outzone</b> · ผู้โจมตีไม่เสียค่าพลัง · ค่าพลังรีเซ็ตต้นเทิร์น</p></section>
+    <section><h3>Declaration-Response</h3><p>ทุกแอ็คเปิดหน้าต่างตอบโต้: Command ที่เป็น <code>[Quick-Cast]</code> / <code>[Counter]</code> ในมืออีกฝ่าย (เช่น Shield Guard, Barrier, Null Magic) ใช้ได้ 1 ครั้งต่อเหตุการณ์ · ไม่มี chain/สแต็ก</p></section>
+    <section><h3>End Phase & Trigger Check</h3><p>เริ่มเอนเฟส → นับ Core Point → ผู้ที่<b>ไม่ได้</b>แต้มเปิดใบบนสุดเด็ค 1 ใบขึ้นมา (ถ้ามี <code>[Trigger]</code> ทำงานทันที) → Terrain ที่ระบุให้สลายตัว → เช็คครบ 7 แต้ม → ส่งเทิร์น</p></section>
+    <section><h3>โควตา & โซน</h3><p>ยูนิตไม่เกิน <b>${R.unitLimit}</b> ตัว · Terrain <b>${R.terrainLimitBase}</b> ใบ (ใบที่ระบุ "คุมหลายใบได้" จะไม่กินโควตา) · Outzone = ถูกทำลาย/ใช้แล้ว · Removezone = ออกจากเกม (มือเกิน ${R.handMax}) · Extra Zone = Token/Arcanum (ดิจิทัล ${R.extraZoneMax} ใบ) · [Protection] ≤ ${R.protectionLimit} ใบ/เด็ค · ซ้ำได้ ${R.maxCopy} ใบ · เด็ค ${R.deckMin}–${R.deckMax} ใบ สีหลัก ≥ ครึ่ง</p></section>
+    <section><h3>หน้าจอนี้ใช้อะไรแสดงผลจริงบ้าง</h3><p>frame การ์ด (<code>assets/ui/frame-*.png</code>) · ภาพศิลปะตัดจากสแกน (<code>assets/art/</code>) · pile Deck/Out/Remove/Extra · แถบ Flare (<code>rail-flare.png</code>) · ไอคอน Core Point/Flare · ปุ่มหกเหลี่ยม END · badge ชนะ/แพ้ · ฉากสนาม 3 ธีม · ฟอนต์ <b>FC Twist Bold</b> (ชื่อ), <b>FC Iconic</b> (UI), <b>SOV LookSit</b> (ตัวเลข CP/Cost)</p></section>
     ${ASSUMPTIONS}
   </div>`;
 
-  const CATALOG = () => {
-    const byColor = {};
-    CARDS.forEach(c => { const k = c.color || 'Colorless'; (byColor[k] = byColor[k] || []).push(c); });
-    return `
-    <h2>คาตาล็อกการ์ดจริง <small>${CARDS.length} ใบ · import จากรูปการ์ดของคุณ (โฟลเดอร์ Drive: png card data)</small></h2>
-    <div class="rb"><section><h3>ชุดที่นำเข้า</h3><p>SB01 = 22 ใบ · SD01 = 15 ใบ · SD04 = 15 ใบ | ชนิด: Unit ${CARDS.filter(c => c.type === 'unit').length} · Command ${CARDS.filter(c => c.type === 'command').length} · Terrain ${CARDS.filter(c => c.type === 'terrain').length}</p></section></div>
-    ${Object.keys(byColor).map(col => `<div class="cat-fac" style="color:${(COLORS[col.toLowerCase()] || {}).tone || '#fff'}">${col} · ${byColor[col].length} ใบ</div>
-      <div class="cat">${byColor[col].map(c => `<div class="cat-card col-${col.toLowerCase()}" data-file="${c.file}">
-        <img loading="lazy" src="${c.art}" alt="">
-        <div><b>${c.name}</b><span class="cat-st">${c.type.toUpperCase()} · Cost ${c.cost}${c.cp ? ' · Power ' + c.cp.toLocaleString() : ''}${c.tribe ? ' · ' + c.tribe : ''}</span></div>
-        ${(c.abilities || []).map(a => `<div class="cat-tx"><em>${a.kw}</em> ${a.text}</div>`).join('') || '<div class="cat-tx">—</div>'}
-      </div>`).join('')}</div>`).join('')}`;
-  };
+  const catalogHTML = () => `
+    <h2>คาตาล็อกการ์ด <small>${CARDS.length} ใบจาก 3 ชุด · แก้ที่ js/data.js</small></h2>
+    <div class="rb"><section><h3>สรุป</h3><p>Unit ${CARDS.filter(c => c.type === 'unit').length} · Command ${CARDS.filter(c => c.type === 'command').length} · Terrain ${CARDS.filter(c => c.type === 'terrain').length}
+    · [Protection] ${CARDS.filter(c => c.protection).length} · ความสามารถที่ engine ต่อผลแล้ว ${CARDS.reduce((a, c) => a + (c.abilities || []).filter(x => (x.ops || []).length).length, 0)} จาก ${CARDS.reduce((a, c) => a + (c.abilities || []).length, 0)} ข้อ</p></section></div>
+    ${['Yellow', 'Blue', 'Red', 'Green', 'Purple', 'Colorless'].map(col => {
+      const list = CARDS.filter(c => (c.color || 'Colorless') === col);
+      if (!list.length) return '';
+      return `<div class="cat-fac" style="color:var(--c-${col.toLowerCase()})">${col} · ${list.length} ใบ</div>
+      <div class="cat">${list.map(c => `<div class="cat-card"><div style="display:flex;gap:8px">
+        <span style="position:relative;flex:0 0 46px;height:64px;border-radius:4px;overflow:hidden;border:1px solid #000">
+          <img src="${artOf(c)}" alt="" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover">
+          <img src="${FRAME[c.type]}" alt="" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover"></span>
+        <span style="min-width:0"><b>${c.name}</b>
+          <span class="cat-st">${c.type.toUpperCase()} · Cost ${c.cost}${c.cp ? ' · ' + c.cp.toLocaleString() + ' CP' : ''} · ${c.tribe || '—'}</span></span></div>
+        ${(c.abilities || []).map(a => `<div class="cat-tx"><em>${a.kw}</em> ${a.text}</div>`).join('')}</div>`).join('')}</div>`;
+    }).join('')}`;
 
   const IMPORTDOC = () => `
-    <h2>การนำเข้าการ์ด <small>ชุดปัจจุบัน: ${CARDS.length} ใบจากรูปการ์ดจริงที่คุณส่งมา</small></h2>
+    <h2>asset &amp;การ์ดในบิลด์นี้ <small>ทุกอย่างมาจากไฟล์ของคุณในโฟลเดอร์ Drive</small></h2>
     <div class="rb">
-      <section><h3>ทำไปแล้วอะไรบ้าง</h3>
-        <p>ดาวน์โหลดรูปจากโฟลเดอร์ Drive ที่คุณให้มา (SB01-001…022, SD01-001…015, SD04-001…0015) → OCR ทุกใบ → เขียนเป็น <code>js/data.js</code> และบีบรูปเป็น <code>img/&lt;FILE&gt;.jpg</code> แสดงจริงในมือ/บนกระดาน/ชีการ์ด/คาตาล็อก</p>
-        <p>ข้อมูลต่อใบ: ชื่อ, ชนิด, Cost, Power, สี, เผ่า (tribe), แท็ก Protection และ <b>ข้อความความสามารถทุกข้อแบบคำต่อคำ</b> จากการ์ด</p></section>
-
-      <section><h3>โครงสร้างข้อมูลที่ engine อ่าน</h3>
-<pre>{ id:'sb01001', file:'SB01-001', art:'img/SB01-001.jpg',
-  name:'Diomedium, Hero of the Celestial Realm',
-  type:'unit'|'command'|'terrain', color:'Yellow',
-  tribe:'Deity / Celestial Alliance', cost:9, cp:4000, protection:false,
-  flags:['multiTerrain'],            // Sylvan = คุมหลายใบได้
-  cellEffects:[{op:'cp',to:'unitInCell',n:1000,mineTurnOnly:true}],   // เฉพาะ Terrain
-  abilities:[
-    { kw:'Activate', when:'main', cost:1, once:true,
-      text:'...(คำต่อคำจากการ์ด)...',
-      ops:[{op:'cp',to:'allyFilter',color:'Yellow',n:3000,dur:'turn'},
-           {op:'point',n:1}],
-      req:[{kind:'outzoneMin',min:12}] },
-    { kw:'Trigger', text:'...', ops:[{op:'mill',n:2}] },
-  ] }</pre>
-        <p><b>ops ที่แปลผลได้:</b> cp · setPower · draw · mill · discard · ready · rest · move(fwd/back/side) · swap · noDestroyBattle · point (อีกฝ่ายเช็คทริกเกอร์ปกติ) · foePoint (ไม่ต่ำกว่า 1) · destroyTerrain · revealAdd · addFromOutzone · playFromOutzone · playHandUnits · outzoneToBottom · shiftCost · ascend (Merge ใต้ใบหลัก) · foeDestroyChoice · banish · cancel · bounce · triggerCheck<br>
-        <b>req:</b> colorCount · tribeCount · terrainMin · outzoneMin/Max · flag(commandPlayed / operationPlayed / terrainDestroyed) · notPlayedThisTurn · handCostReduce (ลด Cost ในมือ)</p></section>
-
-      <section><h3>เด็คที่ประกอบให้อัตโนมัติจากชุดของคุณ</h3>
-        <p>${Object.keys(DECKS).map(function (k) { const d = DECKS[k]; const c = {}; d.main.forEach(function (i) { const cc = CARD_INDEX[i].color; c[cc] = (c[cc] || 0) + 1; }); return '<b>' + d.name + '</b> — ' + d.main.length + ' ใบ (' + Object.keys(c).map(function (kk) { return kk + ' ' + c[kk]; }).join(', ') + ')'; }).join('<br>')}</p>
-        <p>แก้จำนวน/สลับใบได้ที่ <code>DECKS.*.main</code> (กติกาเด็ค: 40–60 ใบ, ซ้ำไม่เกิน 3, สีหลักอย่างน้อยครึ่ง, [Protection] ไม่เกิน 6)</p></section>
-
-      <section><h3>สิ่งที่ยังต้องเติม</h3>
-        <p>1) การ์ดที่ยังไม่ต่อผลอัตโนมัติทั้งหมด — engine ทำงานได้แต่บางข้อจะแสดงเป็นข้อความอย่างเดียว (เช่น Merge/Devour แบบมีเงื่อนไขซับซ้อน, การเรียงการ์ดใต้เด็คตามใจ, เป้าหมาย "เลือก 1" ที่ต้องให้ผู้เล่นกดเลือกใน UI บางใบ)<br>
-        2) Arcanum / Token ยังไม่มีใน 3 ชุดนี้ → ปุ่ม ✦ เรียกอาร์คานัมจะปิดจนกว่าจะมีชุดที่มี<br>
-        3) ส่งโฟลเดอร์/รูปชุดถัดมาหรือ rulebook ที่อัปเดต ผมจะต่อ ops ให้ครบ</p></section>
+      <section><h3>แหล่งทีี่มา</h3><p>52 สแกนการ์ด (<code>png card data</code>) · sprite จาก <b>InGame - Font &amp; Icon</b> (แถบ Flare, Core Point, pile, ปุ่ม END, o/p/s, badge ชนะ/แพ้, โลโก้) · ฉากสนามจาก <b>field_map01–03</b> · card frame จาก <b>sky_unit / sky_terrain</b> · ฟอนต์ 3 ชุดจากโฟลเดอร์ <b>Font</b> · โครงกติกาจาก <b>Rulebook Dev V.24</b> + <b>DESIGN BREAKDOWN</b></p>
+      <p>ขนาดที่ ship: ฟอนต์ subset (ไทย+ลาติน) 36KB · sprite ~1.6MB · art crop 52 ใบ 820KB · ฉาก 3 ธีม 200KB · ไอคอนแอปจากโลโก้จริง</p></section>
+      <section><h3>เพิ่ม/แก้การ์ดเอง</h3><p>แก้ <code>js/data.js</code> → <code>CARDS</code> (ชื่อ/ชนิด/สี/tribe/cost/cp/protection/abilities) และ <code>DECKS.*.main</code> · ตัวตรวจกติกาเด็ค: <code>node test/deckcheck.js</code> · สมดุล AI: <code>node test/play.js 30</code></p></section>
+      <section><h3>ที่ยังต้องเติม</h3><p>1) ภาพจริงของ <i>Token/Arcanum</i> (ยังไม่ใช้ใน build นี้) 2) ability บางข้อพิมพ์เป็นข้อความอย่างเดียว — ดูสถานะได้ในชีการ์ดของแต่ละใบ 3) UI สลับ/เรียงการ์ดใต้เด็คแบบละเอียด (ตอนนี้ mill/toBottom ใช้ลำดับอัตโนมัติ)</p></section>
     </div>`;
 
-  /* ------------------------------------------------- modals + boot */
+  /* ---------------- modal plumbing + จอเริ่ม ---------------- */
   function openModal(id) {
     $('veil').classList.remove('hidden');
     ['modalHome', 'modalRules', 'modalOver'].forEach(m => $(m).classList.toggle('hidden', m !== id));
-    $('btnModalX').style.display = (id === 'modalHome' && !U.S) ? 'none' : 'grid';
+    $('btnModalX').style.display = (id === 'modalHome' && !UI.S) ? 'none' : 'grid';
   }
   const closeModal = () => $('veil').classList.add('hidden');
 
-  function newGame() {
-    U.S = Z.init({
+  function startGame(firstSide) {
+    UI.S = Z.init({
       p0deck: $('selOwnDeck').value, p1deck: $('selFoeDeck').value,
-      p1GoesFirst: $('selFirst').value === 'p1', humanSide: human,
+      p1GoesFirst: firstSide === 'p1', humanSide: human,
     });
-    U.logAt = 0; $('logBody').innerHTML = ''; clearSel(); U.busy = false;
-    $('seedTag').textContent = U.S.seed;
-    closeModal(); render();
-    if (U.S.active !== human) aiGo(); else hint(defaultHint());
+    UI.logAt = 0; $('logBody').innerHTML = ''; UI.busy = false; clearSel();
+    $('seedTag').textContent = UI.S.seed + ' · o/p/s: ' + (firstSide === 'rps' ? '-' : firstSide);
+    $('veil').classList.add('hidden'); ['modalHome', 'modalRules', 'modalOver'].forEach(m => $(m).classList.add('hidden'));
+    render();
+    const go = () => {
+      render();
+      if (UI.S.active !== human) aiGo(); else banner('YOUR TURN', false, 700);
+    };
+    if (UI.S.active === human) Promise.resolve(banner('YOUR TURN', false, 0)).then(go); else go();
+  }
+
+  const BEATS = { paper: 'scissors', scissors: 'rock', rock: 'paper' };
+  async function chooseByRps() {
+    $('rpsPanel').classList.remove('hidden'); $('rpsVeil').classList.remove('hidden');
+    const mine = await new Promise(res => { UI.rpsCb = res; });
+    const theirs = ['paper', 'scissors', 'rock'][Math.floor(Math.random() * 3)];
+    $('rpsVeil').classList.add('hidden');
+    let first;
+    if (mine === theirs) first = 'p0';
+    else first = BEATS[mine] === theirs ? 'p0' : 'p1';
+    $('rpsPanel').classList.add('hidden');
+    startGame(first);
+    const who = first === 'p0' ? 'คุณ' : 'AI';
+    hint(`o/p/s: คุณเลือก ${mine} อีกฝ่าย ${theirs} → ${who}เริ่มก่อน`);
   }
 
   function maybeOver() {
-    const S = U.S; if (!S || !S.winner) return;
+    const S = UI.S; if (!S.winner) return;
     const win = S.winner === human;
     const t = JSON.parse(localStorage.getItem('zf_tally') || '{"w":0,"l":0}');
     t[win ? 'w' : 'l']++; localStorage.setItem('zf_tally', JSON.stringify(t));
-    $('overTitle').textContent = win ? 'ชนะ — ครบ ' + S.players[human].corePoints + ' Core Point' : 'แพ้ — ' + (S.winner === 'p1' ? 'ศัตรูเก็บแต้มครบก่อน' : 'เด็คคุณหมด');
+    $('overBadge').src = win ? 'assets/ui/badge-win.png' : 'assets/ui/badge-lose.png';
+    $('overTitle').textContent = win ? 'ชนะ — ' + S.players[human].corePoints + ' Core Point' : 'แพ้ — ' + (S.winner === aiSide ? 'ศัตรูเก็บแต้มครบก่อน' : 'เด็คคุณหมด');
     $('overTitle').className = win ? 'win' : 'lose';
-    $('overDetail').innerHTML = `เกมนี้ ${S.turnNo} เทิร์น · คุณ ${S.players[human].corePoints}/${R.corePointsToWin} · ศัตรู ${S.players[aiSide].corePoints}/${R.corePointsToWin}`;
+    $('overDetail').innerHTML = `${S.turnNo} เทริน · คุณ ${S.players[human].corePoints}/${R.corePointsToWin} · ศัตรู ${S.players[aiSide].corePoints}/${R.corePointsToWin}`;
     openModal('modalOver');
   }
 
-  async function humanEnd() {
-    const S = U.S;
-    if (S.active !== human || U.busy || S.pending) return;
-    clearSel();
-    const before = S.turnNo;
-    const r = Z.endTurn(S);
-    render(); maybeOver();
-    if (S.winner) return;
-    if (S.active !== human) aiGo();
-  }
-
+  /* ---------------- boot ---------------- */
   function boot() {
     buildBoard();
     const mk = (sel, def) => { sel.innerHTML = ''; Object.keys(DECKS).forEach(k => sel.appendChild(new Option(DECKS[k].name, k))); sel.value = def; };
@@ -487,37 +485,58 @@
     const t = JSON.parse(localStorage.getItem('zf_tally') || '{"w":0,"l":0}');
     $('btnStart').textContent = `เข้าสนาม (${t.w}ชนะ / ${t.l}แพ้)`;
     $('btnRules').onclick = $('btnRules2').onclick = () => { $('modalRules').innerHTML = RULESUM(); openModal('modalRules'); };
-    $('btnCatalog').onclick = () => { $('modalRules').innerHTML = CATALOG(); openModal('modalRules'); };
+    $('btnCatalog').onclick = $('btnCatalog2').onclick = () => { $('modalRules').innerHTML = catalogHTML(); openModal('modalRules'); };
     $('btnImport').onclick = () => { $('modalRules').innerHTML = IMPORTDOC(); openModal('modalRules'); };
-    $('btnModalX').onclick = () => { if (U.S) closeModal(); else openModal('modalHome'); };
-    $('veil').addEventListener('click', e => { if (e.target === $('veil') && U.S) closeModal(); });
+    $('btnModalX').onclick = () => { if (UI.S) closeModal(); else openModal('modalHome'); };
+    $('veil').addEventListener('click', e => { if (e.target === $('veil') && UI.S) closeModal(); });
+    $('btnStart').onclick = () => { const v = $('selFirst').value; if (v === 'rps') { closeModal(); chooseByRps(); } else startGame(v); };
+    $('btnMenu').onclick = () => { const tt = JSON.parse(localStorage.getItem('zf_tally') || '{"w":0,"l":0}'); $('btnStart').textContent = `เข้าสนาม (${tt.w}ชนะ / ${tt.l}แพ้)`; openModal('modalHome'); };
+    $('btnAgain').onclick = () => closeModal() || ($('selFirst').value = 'rps', chooseByRps());
+    $('btnOverHome').onclick = () => openModal('modalHome');
+    $('btnOverLog').onclick = () => { closeModal(); $('logDrawer').classList.add('open'); };
     $('btnLog').onclick = () => $('logDrawer').classList.toggle('open');
     $('btnLogClose').onclick = () => $('logDrawer').classList.remove('open');
-    $('btnMenu').onclick = () => { if (!U.S) return; closeModal(); openModal('modalHome'); };
-    $('btnStart').onclick = newGame; $('btnAgain').onclick = newGame;
-    $('btnOverLog').onclick = () => { closeModal(); $('logDrawer').classList.add('open'); };
+    if ($('tipX')) $('tipX').onclick = () => $('rotateTip').style.display = 'none';
     $('btnEnd').onclick = humanEnd;
     $('btnCancel').onclick = () => { clearSel(); render(); };
-    $('btnArc').onclick = openArcPanel;
     $('btnAbility').onclick = () => {
-      const S = U.S, u = U.sel && S.cards[U.sel.uid];
-      if (!u) return hint('เลือกunit ก่อน');
-      const r = Z.ability(S, human, u.uid);
-      if (!r.ok) hint(r.why); else { const wasPending = S.pending; clearSel(); render(); if (wasPending) waitResponse(); }
+      const u = UI.sel && UI.S.cards[UI.sel.uid]; if (!u) return hint('เลือกunit ก่อน');
+      const ab = (card(u.id).abilities || []).find(a => a.kw === 'Activate');
+      if (!ab) return;
+      const run = tgt => { const r = Z.ability(UI.S, human, u.uid, tgt && tgt.uid); clearSel(); render(); if (!r.ok) hint(r.why); };
+      if (ab.target === 'allyUnit' || (ab.ops || []).some(o => o.to === 'allyTarget')) openPick('เลือกเป้าหมายของ ' + card(u.id).name, Z.units(UI.S, u.side), x => run(x));
+      else run(null);
     };
+    /* เลือกสนาม */
+    $('selField').onchange = e => {
+      UI.fieldTheme = e.target.value;
+      document.querySelector('.field-bg').src = 'assets/bg/field-' + UI.fieldTheme + '.jpg';
+      $('arena').dataset.theme = UI.fieldTheme;
+    };
+    /* pile คลิก = เปิดดูโซน */
+    document.querySelectorAll('.zonepile').forEach(b => b.addEventListener('click', () => {
+      const foeSide = b.closest('#plateFoe');
+      openZone(foeSide ? aiSide : human, b.dataset.z, (foeSide ? 'ศัตรู · ' : 'คุณ · ') + ({ deck: 'เด็ค', outzone: 'Outzone', remove: 'Removezone', extra: 'Extra Zone' })[b.dataset.z]);
+    }));
     $('zvClose').onclick = () => $('zoneView').classList.add('hidden');
-    [['foeDeck', 'p1', 'deck', 'เด็คศัตรู'], ['foeOut', 'p1', 'outzone', 'Outzone ศัตรู'], ['foeRem', 'p1', 'remove', 'Removezone ศัตรู'], ['foeExtra', 'p1', 'extra', 'Extra ศัตรู'],
-     ['ownDeck', 'p0', 'deck', 'เด็คคุณ'], ['ownOut', 'p0', 'outzone', 'Outzone คุณ'], ['ownRem', 'p0', 'remove', 'Removezone คุณ'], ['ownExtra', 'p0', 'extra', 'Extra Zone คุณ']]
-      .forEach(([id, side, zone, label]) => { document.getElementById(id).parentElement.onclick = () => openZone(side, zone, label); });
-    document.addEventListener('keydown', e => { if (e.key === 'Escape') { clearSel(); render(); $('zoneView').classList.add('hidden'); } if (e.key === ' ') { e.preventDefault(); humanEnd(); } });
+    $('pickYes').onclick = () => closePick(true);
+    $('pickNo').onclick = () => closePick(false);
+    $('pickX').onclick = () => closePick(false);
+    document.querySelectorAll('.rps-btn').forEach(b => b.onclick = () => {
+      const cb = UI.rpsCb; UI.rpsCb = null; if (cb) cb(b.dataset.rps);
+    });
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Escape') { if (!($('pickPanel') && $('pickPanel').classList.contains('hidden'))) return; clearSel(); $('zoneView').classList.add('hidden'); render(); }
+      if (e.key === ' ') { e.preventDefault(); humanEnd(); }
+    });
     hint(defaultHint());
+    window.__ZF = { U: UI, Z, ZAI, aiGo, render: () => render(), st: () => UI.S };
     openModal('modalHome');
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => { });
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').then(reg => {
+      setTimeout(() => { try { reg.active && reg.active.postMessage('warm-art'); reg.waiting && reg.waiting.postMessage('warm-art'); } catch (e) { } }, 4000);
+    }).catch(() => { });
   }
-
-  /* hook: ตรวจจบเกมหลังทุกครั้งทีrenderer */
-  const _render = render;
-  render = function () { _render(); if (U.S && U.S.winner && $('modalOver').classList.contains('hidden') && $('veil').classList.contains('hidden')) maybeOver(); };
-  window.__ZF = { U, Z, ZAI, aiGo, render: () => render(), st: () => U.S };
+  /* helper: เป้าหมายของ ability (ฝ่ายตรงข้ามของเจ้าของunit) */
+  const S_of_tgt = side => (side === human ? aiSide : human);
   boot();
 })();

@@ -3,140 +3,181 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no">
-<meta name="theme-color" content="#07080f">
-<meta name="description" content="Zonefall — เกมการ์ดยึด Core Zone เก็บ 7 Core Point (ดิจิทัล build ตาม Rulebook Dev V.24)">
-<title>ZONEFALL — ยึดโซนให้ครบ 7 แต้ม</title>
+<meta name="theme-color" content="#0e0e14">
+<meta name="description" content="Zonefall — เกมการ์ดยึด Core Zone (ดิจิทัล build ตาม rulebook Dev V.24 · การ์ดจริง 52 ใบ)">
+<title>ZONEFALL — ยึด Core Zone ให้ครบ 7 แต้ม</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icons/icon-192.png">
-<link rel="apple-touch-icon" href="icons/icon-192.png">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=Bai+Jamjuree:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="apple-touch-icon" href="icons/icon-512.png">
 <link rel="stylesheet" href="css/game.css">
 </head>
 <body>
 <div id="shell">
 
-  <!-- ============ TOP BAR ============ -->
+  <!-- ================= TOP BAR ================= -->
   <header id="topbar">
-    <div class="brand">
-      <span class="brand-mark">ZF</span>
-      <div class="brand-txt">
-        <b>ZONEFALL</b>
-        <i>Rulebook Dev V.24 · digital build v1.0</i>
-      </div>
+    <img class="brand-logo" src="assets/ui/logo.png" alt="Zonefall">
+    <div class="brand-txt">
+      <b>ZONEFALL</b>
+      <i id="buildTag">Dev V.24 · digital build</i>
     </div>
-    <div class="turn-chip" id="turnChip">—</div>
+    <div class="phase-chip" id="phaseChip"><img src="assets/ui/icon-phase-main.png" alt="">MAIN Phase</div>
     <div class="top-acts">
-      <button class="icon-btn" id="btnRules">?</button>
-      <button class="icon-btn" id="btnLog">≡</button>
-      <button class="icon-btn" id="btnMenu">⌂</button>
+      <button class="hexpush" id="btnRules" title="กติกา">?</button>
+      <button class="hexpush" id="btnLog" title="Log">≡</button>
+      <button class="hexpush" id="btnCatalog2" title="คาตาล็อก">▤</button>
+      <button class="hexpush" id="btnMenu" title="หน้าหลัก">⌂</button>
     </div>
   </header>
 
-  <!-- ============ OPPONENT PLATE ============ -->
+  <!-- ================= OPPONENT ================= -->
   <section class="plate foe" id="plateFoe">
-    <div class="plate-row">
-      <div class="plate-id"><span class="plate-tag">ศัตรู</span><b id="foeName">—</b></div>
-      <div class="coretrack" id="foePts" title="Core Point"><span class="cp-label">CORE POINT</span></div>
-      <div class="flarepips" id="foeFlare"></div>
+    <img class="avatar" id="foeAvatar" src="assets/faction/aegis.png" alt="">
+    <div class="plate-main">
+      <div class="plate-id"><span class="plate-tag">ผู้ท้าชิง</span><b id="foeName">—</b></div>
+      <div class="chips">
+        <span class="chip core"><img src="assets/ui/icon-corepoint.png" alt=""><b id="foePts">0</b><i>/7</i></span>
+        <span class="chip flare"><img src="assets/ui/icon-flare.png" alt=""><b id="foeFlareN">3</b></span>
+        <span class="chip"><i>มือ</i><b id="foeHand">4</b></span>
+        <span class="chip"><i>เด็ค</i><b id="foeDeck">40</b></span>
+      </div>
     </div>
-    <div class="plate-row zones">
-      <span class="z"><i>DECK</i><b id="foeDeck">40</b></span>
-      <span class="z"><i>HAND</i><b id="foeHand">4</b></span>
-      <span class="z"><i>OUT</i><b id="foeOut">0</b></span>
-      <span class="z"><i>REMOVE</i><b id="foeRem">0</b></span>
-      <span class="z"><i>EXTRA</i><b id="foeExtra">0/5</b></span>
-      <span class="z"><i>UNIT</i><b id="foeUnits">0/4</b></span>
-      <span class="z"><i>TERRAIN</i><b id="foeTerr">0/1</b></span>
+    <div class="zonerail" id="foeZones">
+      <button class="zonepile" data-z="deck" title="เด็คศัตรู"><img src="assets/ui/pile-deck.png" alt=""><span id="foeDeckN2">40</span></button>
+      <button class="zonepile" data-z="outzone" title="Outzone ศัตรู"><img src="assets/ui/pile-out.png" alt=""><span id="foeOutN">0</span></button>
+      <button class="zonepile" data-z="remove" title="Removezone"><img src="assets/ui/pile-remove.png" alt=""><span id="foeRemN">0</span></button>
+      <button class="zonepile" data-z="extra" title="Extra Zone"><img src="assets/ui/pile-extra.png" alt=""><span id="foeExtraN">0</span></button>
     </div>
   </section>
 
-  <!-- ============ BOARD 5x3 ============ -->
-  <main id="arena">
-    <div class="rowtag t5" id="tagTop">ศัตรู · Back Row (1)</div>
+  <!-- ================= ARENA ================= -->
+  <main id="arena" data-theme="blue">
+    <img class="field-bg" src="assets/bg/field-blue.jpg" alt="">
+    <aside class="flarerail foe-rail" id="railFoe" data-tag="FOE"><i class="rail-cap"></i><span class="pips"></span></aside>
     <div id="board" class="board"></div>
-    <div class="rowtag t1" id="tagBot">คุณ · Back Row (5)</div>
+    <aside class="flarerail own-rail" id="railOwn" data-tag="YOU"><i class="rail-cap"></i><span class="pips"></span></aside>
+    <div class="banner" id="banner"></div>
   </main>
 
-  <!-- ============ PLAYER PLATE ============ -->
+  <div id="leftcol">
+  <!-- ================= PLAYER ================= -->
   <section class="plate own" id="plateOwn">
-    <div class="plate-row">
+    <img class="avatar" id="ownAvatar" src="assets/faction/verdant.png" alt="">
+    <div class="plate-main">
       <div class="plate-id"><span class="plate-tag">คุณ</span><b id="ownName">—</b></div>
-      <div class="coretrack" id="ownPts"><span class="cp-label">CORE POINT</span></div>
-      <div class="flarepips" id="ownFlare"></div>
+      <div class="chips">
+        <span class="chip core"><img src="assets/ui/icon-corepoint.png" alt=""><b id="ownPts">0</b><i>/7</i></span>
+        <span class="chip flare"><img src="assets/ui/icon-flare.png" alt=""><b id="ownFlareN">3</b></span>
+        <span class="chip"><i>unit</i><b id="ownUnits">0/4</b></span>
+        <span class="chip"><i>terrain</i><b id="ownTerr">0/1</b></span>
+        <span class="chip"><i>trash</i><b id="ownOutN">0</b></span>
+      </div>
+      <div class="acts">
+        <button class="hexbtn sm" id="btnAbility">สั่งใช้งาน</button>
+        <button class="hexbtn sm ghost" id="btnCancel">ยกเลิก</button>
+        <button class="endcap" id="btnEnd"><img src="assets/ui/icon-end.png" alt=""><span>END</span></button>
+      </div>
     </div>
-    <div class="plate-row zones">
-      <span class="z"><i>DECK</i><b id="ownDeck">40</b></span>
-      <span class="z"><i>OUT</i><b id="ownOut">0</b></span>
-      <span class="z"><i>REMOVE</i><b id="ownRem">0</b></span>
-      <span class="z"><i>EXTRA</i><b id="ownExtra">0/5</b></span>
-      <span class="z"><i>UNIT</i><b id="ownUnits">0/4</b></span>
-      <span class="z"><i>TERRAIN</i><b id="ownTerr">0/1</b></span>
-    </div>
-    <div class="plate-row acts">
-      <button class="mini-btn" id="btnArc">✦ เรียกอาร์คานัม</button>
-      <button class="mini-btn" id="btnAbility">⚡ Activate</button>
-      <button class="mini-btn ghost" id="btnCancel">ยกเลิก</button>
-      <button class="end-turn" id="btnEnd">จบเอนเฟส ▸</button>
+    <div class="zonerail" id="ownZones">
+      <button class="zonepile" data-z="deck" title="เด็คคุณ"><img src="assets/ui/pile-deck.png" alt=""><span id="ownDeckN">40</span></button>
+      <button class="zonepile" data-z="outzone" title="Outzone คุณ"><img src="assets/ui/pile-out.png" alt=""><span id="ownOutN2">0</span></button>
+      <button class="zonepile" data-z="remove" title="Removezone คุณ"><img src="assets/ui/pile-remove.png" alt=""><span id="ownRemN">0</span></button>
+      <button class="zonepile" data-z="extra" title="Extra Zone คุณ"><img src="assets/ui/pile-extra.png" alt=""><span id="ownExtraN">0</span></button>
     </div>
   </section>
 
-  <!-- ============ HAND ============ -->
+  <!-- ================= HAND ================= -->
   <section id="handWrap">
-    <div class="hand-head">
-      <span>มือถือ <b id="handCount">0/10</b></span>
-      <span class="hint" id="hint">แตะการ์ดในมือเพื่อลง · แตะunit เพื่อเดิน/โจมตี</span>
-    </div>
+    <div class="hand-head"><span id="handLabel">มือ : 4</span><span class="hint" id="hint">แตะการ์ดในมือเพื่อลง</span></div>
     <div id="hand" class="hand"></div>
   </section>
 
-  <!-- ============ RESPONSE (Declaration-Response) ============ -->
+  </div>
+
+  <!-- ============ Declaration-Response ============ -->
   <div id="guardVeil" class="guard-veil hidden"></div>
   <div id="guardBar" class="guard-bar hidden">
-    <div class="guard-txt" id="guardTitle"><b>Declaration-Response</b> อีกฝ่ายประกาศแอ็ค — คุณตอบโต้ได้ 1 ครั้ง</div>
+    <div class="gb-head"><img src="assets/ui/icon-attack.png" alt=""><b>Declaration-Response</b><span id="guardTitle">อีกฝ่ายประกาศแอ็ค</span></div>
     <div class="guard-opts" id="guardOpts"></div>
   </div>
 
-  <!-- ============ ZONE VIEWER ============ -->
-  <aside id="zoneView" class="hidden"><div class="zv-head"><b id="zvTitle"></b><button class="icon-btn" id="zvClose">×</button></div><div id="zvBody" class="zv-body"></div></aside>
+  <!-- ============ Target / choose popup (ตาม mockup: carousel + ไม่/ใช่) ============ -->
+  <div id="pickVeil" class="guard-veil hidden"></div>
+  <div id="pickPanel" class="pick-panel hidden">
+    <button class="pick-x" id="pickX">×</button>
+    <div class="pick-title" id="pickTitle">เลือกเป้าหมาย</div>
+    <div class="pick-cards" id="pickCards"></div>
+    <div class="pick-bar"><i id="pickBar"></i></div>
+    <div class="pick-act">
+      <button class="parallelogram no" id="pickNo">ไม่</button>
+      <button class="parallelogram yes" id="pickYes">ใช่</button>
+    </div>
+  </div>
 
-  <!-- ============ LOG DRAWER ============ -->
+  <!-- ============ choose first player (o/p/s) ============ -->
+  <div id="rpsVeil" class="guard-veil hidden"></div>
+  <div id="rpsPanel" class="pick-panel rps hidden">
+    <div class="pick-title">เลือกผู้เริ่มก่อน · o / p / s</div>
+    <p class="rps-note">ทาย o/p/s — ผู้ที่ชนะเริ่มก่อน · เสมอ = คุณเริ่ม</p>
+    <div class="rps-row">
+      <button class="rps-btn" data-rps="paper"><img src="assets/ui/rps-paper.png" alt="กระดาษ"><span>กระดาษ</span></button>
+      <button class="rps-btn" data-rps="scissors"><img src="assets/ui/rps-scissors.png" alt="ค้อนกรรไกร"><span>กรรไกร</span></button>
+      <button class="rps-btn" data-rps="rock"><img src="assets/ui/rps-rock.png" alt="ค้อน"><span>ค้อน</span></button>
+    </div>
+  </div>
+
+  <div id="rotateTip"><span>หน้านี้เล่นในแนวตั้งจะเต็มจอที่สุด · หรือให้หน้าจอสูงเท่ากับ scroll เอาได้</span><button id="tipX">เข้าใจแล้ว</button></div>
+
+  <!-- ============ log drawer ============ -->
   <aside id="logDrawer">
-    <div class="log-head"><b>Log การแข่งขัน</b><button class="icon-btn" id="btnLogClose">×</button></div>
+    <div class="log-head"><b>Log การแข่งขัน</b><button class="hexpush" id="btnLogClose">×</button></div>
     <div id="logBody" class="log-body"></div>
   </aside>
 
+  <!-- ============ zone viewer ============ -->
+  <aside id="zoneView" class="hidden"><div class="zv-head"><b id="zvTitle"></b><button class="hexpush" id="zvClose">×</button></div><div id="zvBody" class="zv-body"></div></aside>
+
   <!-- ============ MODALS ============ -->
   <div class="modal-veil hidden" id="veil">
-    <button class="icon-btn modal-x" id="btnModalX">×</button>
+    <button class="hexpush modal-x" id="btnModalX">×</button>
+
     <div class="modal" id="modalHome">
-      <h1>ZONE<br><span>FALL</span></h1>
-      <p class="tagline">สนาม 5 แถว × 3 ช่อง · ยูนิตของคุณใน <b>Core Zone (แถว 3)</b> ตอนจบเทิร์น = <b>1 Core Point</b> ต่อใบ — ใครเก็บครบ <b>7</b> ก่อนชนะ</p>
+      <img class="home-logo" src="assets/ui/logo.png" alt="ZONEFALL">
+      <h1>ZONE<span>FALL</span></h1>
+      <p class="tagline">สนาม 5 แถว × 3 ช่อง · ยูนิตของคุณใน <b>Core Zone (แถว 3)</b> ตอนจบเทิร์น = <b>1 Core Point</b> ต่อใบ · ใครเก็บครบ <b>7</b> ก่อนชนะ · แต่ละฝ่ายเริ่มที่ <b>3 Flare</b></p>
       <div class="pick">
         <label>เด็คของคุณ<select id="selOwnDeck"></select></label>
         <label>เด็คศัตรู<select id="selFoeDeck"></select></label>
-        <label>ฝ่ายเริ่มก่อน<select id="selFirst">
+        <label>สนามแข่ง<select id="selField">
+          <option value="blue">สนามคราม (น้ำเงิน)</option>
+          <option value="green">สนามมุข (เขียว)</option>
+          <option value="red">สนามอัคนี (แดง)</option>
+        </select></label>
+        <label>ผู้เริ่มก่อน<select id="selFirst">
+          <option value="rps">o / p /s ทายกันหน้างาน</option>
           <option value="p0">คุณเริ่ม</option>
           <option value="p1">AI เริ่ม</option>
         </select></label>
       </div>
       <button class="cta" id="btnStart">เข้าสนาม</button>
       <div class="home-links">
-        <button class="link-btn" id="btnRules2">กติกา Zonefall (สรุป)</button>
+        <button class="link-btn" id="btnRules2">กติกา Zonefall</button>
         <button class="link-btn" id="btnCatalog">คาตาล็อกการ์ด</button>
-        <button class="link-btn" id="btnImport">วิธีใส่การ์ดจริง</button>
+        <button class="link-btn" id="btnImport">ข้อมูลการ์ด/asset</button>
       </div>
-      <p class="seedline">seed <b id="seedTag">—</b> · engine: Core Zone / Flare / Declaration-Response / Trigger Check / Terrain / Command / Arcanum</p>
+      <p class="seedline">seed <b id="seedTag">—</b> · 52 การ์ดจริง (SB01/SD01/SD04) · ปิด Arcanum ชั่วคราวตามคำสั่ง</p>
     </div>
 
     <div class="modal hidden" id="modalRules"></div>
+
     <div class="modal hidden" id="modalOver">
+      <img class="over-badge" id="overBadge" src="assets/ui/badge-win.png" alt="">
       <h2 id="overTitle">—</h2>
       <p id="overDetail" class="tagline"></p>
       <div class="home-links">
         <button class="cta" id="btnAgain">แข่งอีกครั้ง</button>
         <button class="link-btn" id="btnOverLog">ดู Log</button>
+        <button class="link-btn" id="btnOverHome">เปลี่ยนเด็ค</button>
       </div>
     </div>
   </div>

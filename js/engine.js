@@ -152,25 +152,27 @@ const Z = (function () {
 
   /* ------------------------------------------------------------ turn flow */
   function startTurn(S) {
-    S.turnNo++; S.phase = 'main'; S.turnActions = 0; S.pending = null;
+    S.turnNo++; S.phase = 'draw'; S.turnActions = 0; S.pending = null;
     S.active = S.turnNo % 2 === 1 ? S.first : foe(S.first);
     const side = S.active, p = S.players[side];
     p.myTurns++;
     p.stats = { terrainDestroyed: 0, commandPlayed: 0, operationPlayed: 0, pointsGained: 0, readyByEffect: 0, playedByUnitEffect: 0 };
-    p.flare = Math.min(R.flareMax, p.myTurns);
-    p.arcFlareReady = p.flare >= R.flareMax;
+    p.flare = Math.min(R.flareMax, (R.flareStart || 1) + p.myTurns - 1);
+    p.arcFlareReady = R.arcanum !== false && p.flare >= R.flareMax;
     /* รีเซ็ตสถานะทั้งสนาม: ค่าพลังกลับเป็นพื้นฐาน (rulebook: รีเซ็ตเมื่อเริ่มเทิร์นใหม่) */
     units(S).forEach(u => { u.rested = false; u.dmg = 0; u.battleCp = 0; u.buffCp = 0; u.used = {}; u.noDestroyBattle = false; u.setPowerBase = null; });
     const skipFirstDraw = R.secondPlayerNoFirstDraw && p.myTurns === 1 && side !== S.first;
     if (skipFirstDraw) log(S, `${p.deckName} (ฝ่ายเริ่มทีหลัง) ไม่จั่วในเทิร์นแรก`, 'dim');
     else draw(S, side);
     log(S, `— เทิร์น ${p.myTurns} (${S.turnNo}) ของ ${p.deckName} · Flare ${p.flare} —`, 'turn');
+    S.phase = 'main';
     runUpkeep(S, side);
     if (S.winner) return S;
     return S;
   }
 
   function endTurn(S) {
+    S.phase = 'end';
     const side = S.active, p = S.players[side];
     /* ---- End Phase ตามลำดับของ rulebook ---- */
     const coreMine = units(S, side).filter(u => u.r === R.coreRow);
@@ -825,6 +827,7 @@ const Z = (function () {
   }
 
   function arcPlayable(S, side) {
+    if (R.arcanum === false) return { ok: false, why: 'บิลด์นี้ยังไม่มี Arcanum' };
     const p = S.players[side];
     const ready = p.extra.map((e, i) => ({ e, i })).filter(x => !x.e.used);
     if (!ready.length) return { ok: false, why: 'Extra Zone ไม่มี Arcanum ที่พร้อมใช้' };

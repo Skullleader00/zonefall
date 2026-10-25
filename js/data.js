@@ -10,11 +10,13 @@
 
 const RULES = {
   name: 'Zonefall',
-  version: 'Dev V.24 · digital build v1.1 (การ์ดจริง 52 ใบ)',
+  version: 'Dev V.24 · digital build v1.2 ( การ์ดจริง 52 ใบ · ไม่มี Arcanum · Flare เริ่ม 3 )',
   rows: 5, cols: 3, coreRow: 2,
   backRow: { p0: 4, p1: 0 }, frontRow: { p0: 3, p1: 1 },
   corePointsToWin: 7,
   flareMax: 8,
+  flareStart: 3,               // แต่ละฝ่ายเริ่มที่ 3 Flare แล้วบวกขึ้นทีละ 1 ต่อเทิร์น (เพดาน 8)
+  arcanum: false,              // ตกลง: ยังไม่มี Arcanum / Arc-Flare ใน build นี้
   unitLimit: 4, terrainLimitBase: 1,
   handStart: 4, handMax: 10,
   deckMin: 40, deckMax: 60, maxCopy: 3,

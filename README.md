@@ -1,103 +1,107 @@
 # Zonefall — digital card game (PWA)
 
-เกมการ์ด **Zonefall** ตาม rulebook ฉบับ Dev V.24 — รันเป็นเว็บแอป (PWA) เล่น Solo กับ AI
-ได้ทันที ไม่ต้อง build, ไม่ต้องใช้ backend, เล่นออฟไลน์ได้หลังเปิดครั้งแรก
+การ์ดเกม **Zonefall** ตาม rulebook ฉบับ **Dev V.24** รันเป็นเว็บแอป (PWA) เล่น **Solo vs AI**
+ได้ทันที ไม่มี build step ไม่ต้องมี backend เล่นออฟไลน์ได้หลังเปิดครั้งแรก
 
-> ข้อมูลการ์ดทั้ง 52 ใบใน repo นี้ OCR มาจากไฟล์รูปการ์ดต้นฉบับของเจ้าของโปรเจกต์
-> ตัว engine กติกาเขียนตาม `Zonefall Rulebook (ฉบับเรียบเรียงใหม่)` Dev V.24
+เอกสารและ asset ทั้งหมดในโปรเจกต์นี้เป็นของเจ้าของเกม Zonefall (rulebook Dev V.24,
+DESIGN BREAKDOWN, ไฟล์ฟอนต์/ไอคอน/โลโก้ และภาพสแกนการ์ด 52 ใบในโฟลเดอร์ Drive)
 
-## วิธีรัน
-
-เปิดโฟลเดอร์นี้ด้วยเซิร์ฟเวอร์ static ใดก็ได้:
+## รัน
 
 ```bash
-python3 -m http.server 3000
-# แล้วเปิด http://localhost:3000
+python3 -m http.server 3000      # แล้วเปิด http://localhost:3000
+# หรือ deploy ทั้งโฟลเดอร์เป็นไฟล์นิ่ง (GitHub Pages / Netlify / Vercel)
 ```
 
-หรือ deploy เป็นไฟล์นิ่ง (GitHub Pages / Netlify / Vercel) ทั้งโฟลเดอร์นี้ได้ทันที
-เพราะไม่มีการ build step
+ลงเป็นแอป: เปิดใน Chrome/Edge → Add to Home screen (`manifest.webmanifest` + service worker)
 
-* ลงเป็นแอปบนมือถือ: เปิดใน Chrome/Edge → Add to Home screen (มี `manifest.webmanifest` + service worker)
-* ต้องการณ์: หน้าจอแนวตั้งบนมือถือ หรือแนวนอนตั้งแต่ 900px ขึ้นไป (layout ปรับอัตโนมัติ)
+## กติกาที่เครื่องเล่นอยู่ (rulebook V.24)
+
+* เป้าหมาย: **7 Core Point** · นับจากการ์ดที่คุณครองใน **Core Zone (แถว 3)** ตอน End Phase ใบละ 1 · หรือทำให้อีกฝ่ายจั่วไม่ได้
+* สนาม **5 แถว × 3 ช่อง** · ลงยูนิต/Command ที่แถวหลังตนเอง · Terrain ที่แถวหน้าตนเอง · ห้ามเข้าแถวหลังศัตรู · Terrain ไม่บล็อกทางเดิน
+* **Flare เริ่มที่ 3** แล้ว +1 ทุกเทิร์นของคุณจนถึงเพดาน 8 · ไม่สะสมข้ามเทิร์น
+* **วางนอน = ใช้แอ็ค**: ยูนิต 1 ตัวทำอะไร 1 อย่างต่อเทิร์น · เดินฟรี 1 ช่อง · โจมตีใช้ 1 Flare · โจมตีได้เฉพาะหน้า/ซ้าย/ขวา
+* **การต่อสู้ (Persistent Power)**: CP ผู้โจมตีไปลบ CP ผู้ป้องกัน เหลือ 0 → Outzone · ผู้โจมตีไม่เสียค่าพลัง · รีเซ็ตต้นเทิร์น
+* **Declaration-Response**: ทุกแอ็คเปิดหน้าต่างให้อีกฝ่ายตอบโต้ 1 ครั้ง (`[Quick-Cast]` / `[Counter]` ในมือ เช่น Shield Guard / Barrier / Null Magic) · ไม่มี chain · `[Counter]` ของยูนิตทำงานก่อน `[Attack]`
+* **End Phase**: นับ Core Point → อีกฝ่าย **Trigger Check** (เปิดใบบนสุดขึ้นมือ + ทำงานถ้ามี `[Trigger]`) → Terrain ที่ระบุให้สลาย → เช็ค 7 แต้ม → ส่งเทิร์น
+* โควตา: ยูนิต ≤ 4 · Terrain ≤ 1 (ใบที่ `multiTerrain` เช่น Sylvan ไม่นับ) · มือ ≤ 10 (เกิน → Removezone) · Outzone / Removezone / Extra Zone ครบ
+* เด็ค: 40–60 ใบ · ซ้ำ ≤ 3 · สีหลัก ≥ ครึ่ง · `[Protection]` ≤ 6 (มีตัวตรวจใน `test/deckcheck.js`)
+* **ปิด Arcanum / Arc-Flare ชั่วคราว** ตามที่สั่ง (`RULES.arcanum = false`)
+
+### keyword / op ที่ engine แปลผลอัตโนมัติ
+
+`On Play(On Deploy)` · `Activate` · `Cont` · `Trigger` · `Attack` · `Counter` · `Action` · `Upkeep`
+`Quick-Cast` · `Cast` · `Ascend/Merge`
+
+ops: `cp` `setPower` `draw` `mill` `discard` `ready` `rest` `move(fwd|back|side)` `swap`
+`noDestroyBattle` `point` `foePoint` `destroyTerrain` `revealAdd` `addFromOutzone` `playFromOutzone`
+`playHandUnits` `outzoneToBottom` `shiftCost` `ascend` `foeDestroyChoice` `cancel` `bounce` `summon`
+`autoCore` `damage` `destroy` `flare` `core` `toOutzone`
+
+เงื่อนไข (`req`): `colorCount` `tribeCount` `colorBackRow` `terrainMin` `outzoneMin/Max`
+`flag(commandPlayed|operationPlayed|terrainDestroyed)` `notPlayedThisTurn` `handCostReduce`
+
+ใน **ชีรายละเอียดการ์ด** ทุกใบมี `<details>` ของนักพัฒนา บอกว่า ability นั้นต่อ op อะไรแล้ว
+หรือเป็น "แสดงข้อความอย่างเดียว"
+
+## งานภาพ (ใช้ asset ของเกมเอง)
+
+| ส่วน | ไฟล์ |
+|---|---|
+| ฟอนต์ชื่อการ์ด / UI /ตัวเลข CP | `assets/fonts/zonefall-display.woff2` (FC Twist Bold) · `zonefall-ui.woff2` (FC Iconic) · `zonefall-num.woff2` (SOV LookSit) — subset ไทย+ลาติน รวม ~37KB |
+| กรอบการ์ด + ช่องภาพ | `assets/ui/frame-unit.png` `frame-command.png` `frame-terrain.png` (เจาะหน้าต่างภาพ/กล่องข้อความให้โปร่งใส) |
+| ภาพศิลปะ 52 ใบ | `assets/art/<FILE>.jpg` (crop จากสแกนตามขอบเขตที่วัดจากไฟล์จริง) |
+|เกจ Flare | `assets/ui/icon-flare.png` + pips เพชรส่องแสง (ขวา=ศัตรู สีส้ม, ซ้าย=คุณ สีฟ้า) |
+| Core Point | `assets/ui/icon-corepoint.png` |
+| โซน/กอง | `pile-deck/out/remove/extra.png` |
+| ปุ่ม END / โหมดตอบโต้ / o-p-s | `icon-end.png` `icon-attack.png` `icon-move.png` `panel-choose.png` `rps-paper|rock|scissors.png` |
+| แบนเนอร์เฟส | `icon-phase-draw/main/end.png` |
+| ชนะ/แพ้ | `badge-win.png` `badge-lose.png` |
+| โลโก้ + ไอคอนแอป + faction | `logo.png` `icons/icon-*.png` `assets/faction/*.png` |
+| ฉากสนาม 3 ธีม | `assets/bg/field-blue|green|red.jpg` (เลือกได้ในหน้าแรก) |
+
+เลย์เอาต์ทดสอบที่ 360 · 390 · 430 · 768×1024 · 844×390 · 1024×700 · 1366×850
+(≥1180 แนวแนวนอน = 3 คอลัมน์ มือ/ผู้เล่น · กระดาน · Log)
+
+> หมายเหตุสัญญาอนุญาตฟอนต์: `FC Twist Bold` มาพร้อมไฟล์ "[Non-commercial]" ในโฟลเดอร์ฟอนต์
+> ถ้าโปรเจกต์จะออกเชิงพาณิชย์ ต้องซื้อสิทธิ์หรือเปลี่ยนฟอนต์ตัวแสดงผล
 
 ## โครงสร้าง
 
 ```
-index.html            โครงหน้าจอ (plate กระดาน มือ ช่อง response log modal)
-css/game.css          ธีม "holo war-table" + responsive 5 viewport
-js/data.js            RULES + การ์ดจริง 52 ใบ + เด็คทดสอบ 2 ชุด   <-- แก้ไฟล์นี้เพื่อเปลี่ยนเกม
-js/engine.js          rule engine (state, legality, combat, response, effects)
-js/ai.js              AI planner + นโยบายตอบโต้ (Declaration-Response)
-js/ui.js              เรนเดอร์ + สัมผัส/คลิก + driver ของตา AI
-sw.js                 service worker (offline-first)
-manifest.webmanifest  PWA manifest
-icons/                ไอคอนแอป
-img/                  ภาพการ์ดจริง (บีบเป็น ~460px JPG จากสแกนต้นฉบับ)
+index.html            โครงจอ
+css/game.css          ธีม + layout responsive
+js/data.js            RULES + การ์ด 52 ใบ + เด็ค 2 ชุด   ← แก้ไฟล์นี้เพื่อเปลี่ยนเกม
+js/engine.js          rule engine (legality, combat, response, effects)
+js/ai.js              AI planner + นโยบายตอบโต้
+js/ui.js              เรนเดอร์ + สัมผัส + driver ตา AI + จอ o/p/s + popups
+sw.js                 service worker (offline-first + warm ภาพการ์ดทีละใบ)
+manifest.webmanifest  PWA
+test/                 harness + play + deckcheck + browser e2e
+assets/, img/, icons/ sprite/ฟอนต์/ภาพการ์ด
 ```
-
-ทุกอย่างเป็น vanilla JS (ไม่มี dependency, ไม่มี build) และ `Engine` แยกออกจาก UI
-จึงทดสอบด้วย Node ได้ตรง ๆ (ดูหัวข้อ "ทดสอบ")
-
-## กติกาที่ implement (Zonefall V.24)
-
-| ระบบ | รายละเอียด |
-|---|---|
-| สนาม | 5 แถว × 3 ช่อง · แถว 3 = **Core Zone** · ลงยูนิต/Command ที่แถวหลังตนเอง · Terrain ที่แถวหน้าตนเอง · ห้ามรุกล้ำแถวหลังศัตรู |
-| ชนะ | สะสม **7 Core Point** (นับจากยูนิต/Arcanum ใน Core Zone ตอน End Phase ใบละ 1) หรืออีกฝ่ายจั่วไม่ได้/เด็คหมด |
-| Flare | `Flare = เลขเทิร์นตัวเอง` แคป 8, รีเซ็ตทุกเทิร์น · **Arc-Flare** = เม็ดที่ 8 ใช้เป็นแอ็คแรกของเทิร์นเพื่อข้าม Cost ของ Arcanum |
-| แอ็ค | ยูนิตใช้แอ็คได้ 1 ครั้ง/เทิร์นด้วยการ "วางนอน" (เดิน หรือ โจมตี หรือ Activate) · เดิน 4 ทิศ ช่องเว้นช่อง · Terrain ไม่บล็อกทาง |
-| ต่อสู้ | ประกาศโจมตี → **Declaration-Response** → Counter ผู้ป้องกัน → Attack ผู้โจมตี → วัดค่าพลัง:เอา CP ผู้โจมตีไปลบ CP ผู้ป้องกัน เหลือ 0 = Outzone (Persistent Power / Playtest Ver.2) · ค่าพลังรีเซ็ตต้นเทิร์น |
-| Response | ทุกแอ็คให้อีกฝ่ายตอบโต้ **1 ครั้ง** (Quick-Cast / Counter ในมือ เช่น Null Magic, Shield Guard, Barrier) · ไม่มี chain/สแต็ก · เจ้าของเทิร์น resolve ก่อน |
-| Trigger Check | เมื่ออีกฝ่ายได้ Core Point → เปิดใบบนสุดของเด็คขึ้นมือ และถ้าใบนั้นมี `[Trigger]` จะทำงานทันที |
-| โซน | Outzone · Removezone (มือเกิน 10 ใบ = ออกจากเกม) · Extra Zone (Arcanum/Token, ดิจิทัล 5 ใบ, Arcanum ที่ถูกทำลายจะหงายหน้าและใช้ไม่ได้อีก) |
-| โควตา | ยูนิต 4 ตัว/ฝ่าย · Terrain 1 ใบ (ยกเว้น `multiTerrain`) · Command ต้องมีช่องว่างแถวหลังและครองช่องขณะ resolve · [Protection] ≤ 6 ใบ/เด็ค · ซ้ำ ≤ 3 · เด็ค 40–60 · สีหลัก ≥ ครึ่ง |
-
-### keyword ที่ engine แปลผลอัตโนมัติ
-
-`On Play` · `Activate` · `Cont` · `Trigger` · `Attack` · `Counter` · `Action` · `Upkeep` · `Quick-Cast` · `Cast`
-
-op ที่รองรับ: `cp` `setPower` `draw` `mill` `discard` `ready` `rest` `move(fwd|back|side)` `swap`
-`noDestroyBattle` `point` `foePoint` `destroyTerrain` `revealAdd` `addFromOutzone`
-`playFromOutzone` `playHandUnits` `outzoneToBottom` `shiftCost` `ascend(Merge)` `foeDestroyChoice`
-`banish` `cancel` `bounce` `triggerCheck` `flare` `core` `damage` `destroy`
-
-เงื่อนไข (`req`): `colorCount` `tribeCount` `terrainMin` `outzoneMin/Max`
-`flag(commandPlayed|operationPlayed|terrainDestroyed)` `notPlayedThisTurn` `handCostReduce`
-
-### สถานะการนำเข้าการ์ด
-
-`SB01` 22 ใบ · `SD01` 15 ใบ · `SD04` 15 ใบ · Unit 33 / Command 15 / Terrain 4
-· 105 abilities / 129 ops ที่ engine ทำงานได้
-ในหน้า "ชีการ์ด" ของทุกใบจะมีป้ายระบุว่า ability นั้น **ต่อผลอัตโนมัติแล้ว**
-หรือ **แสดงข้อความอย่างเดียว** (ยังต้องเขียน op เพิ่ม) — กดปุ่ม `i` ที่มุมการ์ด
 
 ## ทดสอบ
 
 ```bash
-# 1) syntax
-for f in js/*.js sw.js; do node --check $f; done
-
-# 2) AI vs AI สมดุล (ต้องรวมไฟล์ data/engine/ai เข้ากับ harness ของคุณ)
-node test/play.js 20 400      # games, maxSteps
-
-# 3) e2e บนเบราว์เซอร์ (Playwright)
-node test/browser.js
+node test/deckcheck.js                 # กติกาการจัดเด็ค (exit 1 ถ้าผิด)
+node test/play.js 30 600               # AI vs AI: error / ความยาวเกม / win rate
+node test/play.js 24 600 sylvan sylvan # mirror เพื่อแยก "ผลของฝ่ายเริ่มก่อน" ออกจากเด็ค
+BASE=http://localhost:3000/index.html node test/browser.js   # e2e 5 viewport (ต้องมี playwright)
+npm start                              # เซิร์ฟเวอร์ท้องถิ่น
 ```
 
-ผลล่าสุด (การ์ดจริง 52 ใบ, เด็ค SD01 vs SD04): **32 เกม 0 error**, เล่นจบทุกเกม,
-เฉลี่ย **15.3–16.1 เทิร์น**, ชนะ 11–9 · Playwright: ไม่มี pageerror/console error,
-ไม่มีข้อความ `undefined/NaN` ใน DOM, layout ผ่านที่ 390 / 768 / 844 / 1024 / 1366 px
+ผลรอบล่าสุด: `deckcheck` ผ่านทั้งสองเด็ค · AI-vs-AI **108 เกม 0 error** ·
+ความยาวเฉลี่ย **11.4–13.0 เทิร์น** · mirror match ฝ่ายเริ่มก่อนชนะ **79–83%** ·
+คู่ข้ามเด็ค (SD04 = เครื่องจักร) เหนือกว่า SD01 ชัด (97%) → ยังไม่ปรับสมดุล รอ decision เจ้าของเกม
+`browser.js` ผ่าน 5/5 viewport, ไม่มี pageerror, ไม่มีข้อความ `undefined/NaN` ใน DOM
 
-## หมายเหตุด้านกติกา (ข้อสมมติที่รอ owner ยืนยัน)
+## สมดุลที่ยังค้าง (ต้องตัดสินใจ)
 
-1. การโจมตีใช้ **1 Flare** / การเคลื่อนที่ฟรี (อ้างอิงจากตัวอย่าง "Lava Stream: โจมตีได้โดยไม่ใช้ Flare")
-2. เดิน **1 ช่องต่อแอ็ค** และ 1 แอ็คต่อเทิร์น (วางนอน)
-3. ผู้ที่เริ่มทีหลังไม่จั่วในเทิร์นแรก (ตาม rulebook) — วัดแล้วฝ่ายเริ่มก่อนชนะ ~80%
-4. `[Counter]` ของยูนิต resolve อัตโนมัติหลังหน้าต่างตอบโต้
-5. Arcanum/Token ยังไม่มีใน 3 ชุดที่นำเข้า ปุ่มเรียก Arcanum จะปิดจนกว่าจะมีการ์ด
-
-## License
-
-ตัวโค้ดใน repo นี้เผยแพร่ภายใต้เจ้าของโปรเจกต์ (Zonefall) —
-ข้อความ/ภาพการ์ดทั้งหมดเป็นเจ้าของโดยผู้ออกแบบเกม Zonefall
+1. ฝ่ายเริ่มก่อนชนะราว 80% — rulebook ให้ฝ่ายเริ่มทีหลัง *ไม่จั่ว* เทิร์นแรก ซึ่งซ้ำเติมอีก
+   ทางเลือก: ให้ฝ่ายเริ่มทีหลังได้ +1 Flare ชั่วคราว / ให้เริ่มทีหลังเลือก Core Zone ก่อน /
+  หรือยกเลิกข้อยกเว้นการจั่ว
+2. เด็คจากชุด SD01/SD04 ที่โปรแกรมประกอบให้อัตโนมัติอาจไม่ใช่เด็คที่ทีมจะเล่นจริง
+   — ส่งลิสต์เด็คจริงมา ผมจะใส่ใน `DECKS` + ตรวจกติกาให้
+3. `handCostReduce` ของใบอย่าง Agrony/Ahenla ใช้ตัวนับ "Terrain ถูกทำลายเทิร์นนี้"
+   ถ้ากติกาจริงนับคนละแบบ แจ้งผมได้
