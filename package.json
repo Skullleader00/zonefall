@@ -1,0 +1,26 @@
+{
+  "name": "zonefall",
+  "version": "1.1.0",
+  "description": "Zonefall — digital card game (PWA) ตาม rulebook Dev V.24 · vanilla JS ไม่มี build step",
+  "scripts": {
+    "start": "python3 -m http.server 3000",
+    "serve": "npx --yes serve -l 3000 .",
+    "test": "npm run test:play && npm run test:deck",
+    "test:play": "node test/play.js 30 500",
+    "test:deck": "node test/deckcheck.js",
+    "test:browser": "node test/browser.js"
+  },
+  "devDependencies": {
+    "playwright": "^1.58.0"
+  },
+  "keywords": [
+    "card-game",
+    "zonefall",
+    "pwa",
+    "tabletop",
+    "tcg",
+    "vanilla-js"
+  ],
+  "license": "UNLICENSED",
+  "private": true
+}

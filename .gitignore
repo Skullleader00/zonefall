@@ -1,0 +1,13 @@
+# deps / build
+node_modules/
+package-lock.json
+dist/
+.cache/
+
+# editor / os
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.log
+tmp/
