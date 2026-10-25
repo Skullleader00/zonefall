@@ -75,6 +75,11 @@ const Z = (function () {
   function pay(S, side, n) { S.players[side].flare -= n; }
   const terrainLimit = (S, side) => R.terrainLimitBase + terrains(S, side).reduce((a, t) => a + (hasFlag(card(t.id), 'terrainLimit') ? 1 : 0), 0);
   const isMultiTerrain = t => hasFlag(card(t.id), 'multiTerrain');
+  /* โควตา Terrain นับเฉพาะใบที่ไม่ใช่ multiTerrain (ตามข้อความ “You can control multiple Sylvan Terrains”) */
+  function terrainOverLimit(S, side, newCardId) {
+    if (newCardId && hasFlag(card(newCardId), 'multiTerrain')) return 0;
+    return Math.max(0, terrains(S, side).filter(t => !isMultiTerrain(t)).length - terrainLimit(S, side));
+  }
 
   /* --------------------------------------------------------------- setup */
   function shuffle(a, rng) { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1));[a[i], a[j]] = [a[j], a[i]]; } return a; }
@@ -599,6 +604,7 @@ const Z = (function () {
     const p = S.players[a.side];
     if (a.kind === 'deploy') {
       const id = p.hand[a.handIdx], cd = card(id);
+      if (cd.type !== 'unit' && cd.type !== 'token') return { ok: false, why: 'การ์ดนี้ต้องร่ายเป็น Command/Terrain ไม่ใช่ลงเป็นยูนิต', needType: cd.type };
       const free = R.unitLimit && unitCount(S, a.side) >= R.unitLimit && cd.type !== 'arcanum';
       if (free) return { ok: false, why: `สนามเต็ม (ยูนิตไม่เกิน ${R.unitLimit} ตัว)` };
       p.flare -= cd.cost; p.hand.splice(a.handIdx, 1);
@@ -627,9 +633,10 @@ const Z = (function () {
       const here = S.cells[a.cell.r][a.cell.c];
       const t = makeCard(S, id, a.side, a.cell.r, a.cell.c, 'terrain');
       log(S, `▦ วาง Terrain [${cd.name}] → ช่อง ${a.cell.r + 1}-${a.cell.c + 1} (Flare ${cd.cost})`, 'play');
-      const over = terrains(S, a.side).length - (terrainLimit(S, a.side) + (isMultiTerrain(t) ? 99 : 0));
+      const over = terrainOverLimit(S, a.side, id);
       if (over > 0) {
-        const old = (a.dropUid ? S.cards[a.dropUid] : terrains(S, a.side).find(x => x.uid !== t.uid));
+        const pool = terrains(S, a.side).filter(x => !isMultiTerrain(x) && x.uid !== t.uid);
+        const old = a.dropUid ? S.cards[a.dropUid] : pool[0];
         if (old) { log(S, `  ↳ Terrain เกิน limit — ส่ง [${card(old.id).name}] ไป Outzone (ไม่ถือว่าถูกทำลาย)`, 'dim'); leaveField(S, old, 'outzone'); }
       }
       return { ok: true, uid: t.uid };

@@ -16,7 +16,8 @@
   const FRAME = { unit: 'assets/ui/frame-unit.png', command: 'assets/ui/frame-unit.png', terrain: 'assets/ui/frame-terrain.png', arcanum: 'assets/ui/frame-unit.png', token: 'assets/ui/frame-unit.png' };
   const PHASE_ICON = { draw: 'assets/ui/icon-phase-draw.png', main: 'assets/ui/icon-phase-main.png', end: 'assets/ui/icon-phase-end.png' };
   const PHASE_TXT = { draw: 'DRAW Phase', main: 'MAIN Phase', end: 'END Phase' };
-  const artOf = cd => 'assets/art/' + cd.file + '.jpg';
+  const artOf = cd => 'assets/art/' + cd.file + '.jpg';   /* ครอปหน้าต่างภาพจากสแกนจริง (ไว้ถมช่องสนาม) */
+  const scanOf = cd => cd.art;                              /* สแกนเต็มใบ (ไว้แสดงในมือ/ชีข้อมูล) */
   /* url ใน custom property ถูก resolve เทียบกับไฟล์ CSS → ฝังเป็น absolute จาก baseURI ของเอกสาร */
   const urlVar = p => 'url("' + new URL(p, document.baseURI).href + '")';
   const kindLine = cd => ({ unit: 'UNIT', command: 'COMMAND', terrain: 'TERRAIN', token: 'TOKEN', arcanum: 'ARCANUM' })[cd.type] || 'CARD';
@@ -37,6 +38,16 @@
         cell.appendChild(el('div', 'terr'));
         cell.appendChild(el('div', 'tkslot'));
         cell.addEventListener('click', () => onCell(r, c));
+        bindPress(cell, () => { const xx = UI.S && UI.S.cells[r][c]; if (!xx) return;
+          if (xx.unit) showCard(xx.unit.id); else if (xx.terrain) showCard(xx.terrain.id); });
+        cell.addEventListener('pointerdown', e => {                 /* ลากยูนิตจากช่อง = เดิน/โจมตี */
+          const xx = UI.S && UI.S.cells[r][c]; if (!xx || !xx.unit) return;
+          const un = xx.unit;
+          if (un.side !== human || UI.S.active !== human || UI.busy || UI.S.pending) return;
+          if (un.rested) return;
+          if (e.pointerType === 'mouse' && e.button !== 0) return;
+          beginGesture('unit', { uid: un.uid }, scanOf(card(un.id)), e, cell);
+        }, { passive: true });
         board.appendChild(cell);
       }
     }
@@ -58,13 +69,14 @@
 
     for (let r = 0; r < R.rows; r++) for (let c = 0; c < R.cols; c++) {
       const ce = cellEl(r, c), slot = ce.querySelector('.tkslot'), terr = ce.querySelector('.terr'), x = S.cells[r][c];
-      ce.className = 'cell' + (r === R.coreRow ? ' core' : (r < R.coreRow ? ' foe' : ' own'));
+      ce.className = 'cell' + (r === R.coreRow ? ' core' : (r < R.coreRow ? ' foe' : ' own')) + (x.terrain && x.unit ? ' both' : '');
       if (UI.hl.cells.some(k => k.r === r && k.c === c)) ce.classList.add('hl-cell');
       if (UI.hl.move.some(k => k.r === r && k.c === c)) ce.classList.add('hl-move');
       slot.innerHTML = ''; terr.innerHTML = '';
       if (x.terrain) {
         const tcd = card(x.terrain.id);
-        terr.innerHTML = `<span class="t-chip ${x.terrain.side === human ? '' : 'foe'}">▦ ${tcd.name}</span>`;
+        terr.innerHTML = `<img src="${artOf(tcd)}" alt="${tcd.name}" draggable="false"><span class="terr-name">▦ ${tcd.name}</span>`;
+
       }
       const u = x.unit;
       if (!u) continue;
@@ -73,20 +85,28 @@
       const cd = card(u.id);
       const tk = el('div', 'tk ' + (u.side === human ? 'own' : 'foe') + (u.rested ? ' rested' : '') + (u.arc ? ' arc' : '') +
         (UI.sel && UI.sel.kind === 'unit' && UI.sel.uid === u.uid ? ' sel' : ''));
-      tk.style.setProperty('--art', urlVar(artOf(cd)));
-      tk.innerHTML = `<span class="tk-art"></span><span class="tk-cp">${Z.effCp(S, u).toLocaleString()}</span>
-        <span class="tk-name" title="${cd.name}">${cd.name}</span>
-        <span class="tk-tag">${u.arc ? 'ARC' : cd.type === 'token' ? 'TOKEN' : (u.fused && u.fused.length ? 'FUSED ×' + u.fused.length : (cd.tribe || ''))}</span>
-        ${u.dmg ? `<span class="tk-dmg">-${u.dmg.toLocaleString()}</span>` : ''}`;
+      const fl = [];
+      if (u.arc) fl.push('<i>ARCANUM</i>');
+      if (u.fused && u.fused.length) fl.push('<i class="tough">FUSED ×' + u.fused.length + '</i>');
+      if (u.noDestroyBattle) fl.push('<i class="tough">ไม่ล้มเทิร์นนี้</i>');
+      if (u.costLocked) fl.push('<i class="rest">Cost →' + u.costLocked + '</i>');
+      if (u.dmg) fl.push('<i class="dmg">−' + u.dmg.toLocaleString() + '</i>');
+      if ((cd.abilities || []).some(a => a.kw === 'Trigger')) fl.push('<i>TRIGGER</i>');
+      tk.innerHTML = `<img class="tk-img" src="${cd.art}" alt="${cd.name}" draggable="false">
+        <span class="tk-cost">${cd.cost}</span>
+        <span class="tk-cp">${Z.effCp(S, u).toLocaleString()}</span>
+        <span class="tk-flags">${fl.join('')}</span>`;
       slot.appendChild(tk);
     }
 
     hand(p);
+    const hb = $('hand'); $('handWrap').classList.toggle('canScroll', hb.scrollWidth > hb.clientWidth + 8);
     const selU = UI.sel && UI.sel.kind === 'unit' ? S.cards[UI.sel.uid] : null;
     $('btnAbility').classList.toggle('hidden', !(selU && (card(selU.id).abilities || []).some(a => a.kw === 'Activate')));
     $('btnAbility').disabled = !canAct(S, selU);
     $('btnEnd').disabled = S.active !== human || UI.busy || !!S.pending;
     $('btnCancel').disabled = !UI.sel;
+    applyHL();
     renderLog(); renderResponse();
   }
   
@@ -120,7 +140,11 @@
   }
 
   function hand(p) {
-    const S = UI.S, box = $('hand'); box.innerHTML = '';
+    const S = UI.S, box = $('hand');
+    const key = p.hand.join(',');
+    if (!UI.drag && box.dataset.key === key && box.childElementCount === p.hand.length) { flagOnly(box, p); return; }
+    box.dataset.key = key;
+    box.innerHTML = '';
     box.style.setProperty('--n', Math.max(1, p.hand.length));
     p.hand.forEach((id, i) => {
       const cd = card(id);
@@ -128,21 +152,22 @@
       const off = !info || !info.ok || S.active !== human || UI.busy || S.pending;
       const n = el('button', 'gcard cost-ring col-' + (cd.color || 'Colorless').toLowerCase() + ' type-' + cd.type +
         (UI.sel && ((UI.sel.kind === 'hand' && UI.sel.idx === i) || (UI.sel.kind === 'command' && UI.sel.idx === i)) ? ' sel' : '') + (off ? ' dim' : ''));
-      n.style.setProperty('--art', urlVar(artOf(cd)));
-      n.innerHTML = `<span class="art-win"></span>
-        <img class="frame-fill" src="${FRAME[cd.type] || FRAME.unit}" alt="">
-        <span class="cost-hole">${cd.cost}</span>
-        <span class="kind-hole">${kindLine(cd)}</span>
-        ${cd.cp ? `<span class="cp-hole">${cd.cp.toLocaleString()}</span>` : ''}
-        <span class="name-hole">${cd.name}</span>
-        <span class="tri-hole">${cd.color} · ${cd.tribe || '—'}</span>
-        <span class="footy">${(cd.abilities || []).map(a => `<em>${a.kw}</em>`).join('')}</span>
-        <span class="txt-hole">${(cd.abilities || []).map(a => a.text).join(' ') || '—'}${(cd.abilities || []).length > 1 ? '<span class="tip">แตะ i เพื่อดูครบทุกข้อ</span>' : ''}</span>
-        ${cd.protection ? '<span class="prote">PROTECTION</span>' : ''}
-        <span class="info-hole">i</span>`;
-      n.querySelector('.info-hole').addEventListener('click', ev => { ev.stopPropagation(); showCard(cd.id); });
-      n.addEventListener('click', ev => { ev.stopPropagation(); onHand(i); });
+      n.dataset.idx = i;
+      n.innerHTML = `<img class="gc-img" src="${cd.art}" alt="${cd.name}" draggable="false">
+        <span class="gc-flag"><i>${kindLine(cd)} · Cost ${cd.cost}${cd.cp ? ' · ' + cd.cp.toLocaleString() + ' CP' : ''}</i>
+          ${cd.protection ? '<i class="prote">PROTECTION</i>' : ''}</span>`;
+      bindPress(n, () => { showCard(cd.id); });
+      n.addEventListener('click', ev => { if (consumePress(ev)) return; ev.stopPropagation(); onHand(i); });
+      bindHandDrag(n, i);
       box.appendChild(n);
+    });
+  }
+
+  function flagOnly(box, p) {   /* ตอนลาก: อัปเดตเฉพาะ dim/sel ไม่สร้างใหม่ */
+    [...box.children].forEach((n, i) => {
+      const id = p.hand[i]; if (!id) return;
+      const info = Z.cardPlayable(UI.S, human, i);
+      n.classList.toggle('dim', !info || !info.ok || UI.S.active !== human || UI.busy || !!UI.S.pending);
     });
   }
 
@@ -266,6 +291,177 @@
     if (S.active !== human) aiGo();
   }
 
+  /* ---------------- กดค้าง (ดูข้อมูล) / ลากวาง / เต็มจอ ---------------- */
+  let pressTimer = null, lastPressAt = 0, suppressTap = false;
+  const LONG_PRESS = 430, MOVE_TOL = 11;
+  function bindPress(node, onLong) {
+    let sx = 0, sy = 0, timer = null, fired = false;
+    node.addEventListener('pointerdown', e => { if (e.pointerType === 'touch') node.style.touchAction = 'none'; }, { passive: true });
+    const clear = () => { if (timer) { clearTimeout(timer); timer = null; } };
+    node.addEventListener('pointerdown', e => {
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      if (UI.drag) return;
+      sx = e.clientX; sy = e.clientY; fired = false;
+      clear();
+      timer = setTimeout(() => { fired = true; lastPressAt = Date.now(); timer = null; onLong(); if (navigator.vibrate) navigator.vibrate(12); }, LONG_PRESS);
+    }, { passive: true });
+    node.addEventListener('pointermove', e => { if (timer && Math.hypot(e.clientX - sx, e.clientY - sy) > MOVE_TOL) clear(); }, { passive: true });
+    node.addEventListener('pointerup', clear);
+    node.addEventListener('pointercancel', clear);
+    node.addEventListener('lostpointercapture', clear);
+    node.addEventListener('contextmenu', e => { if (fired) e.preventDefault(); });
+  }
+  /* หลังกดค้าง: บล็อก click ที่จะตามมาชั่วครู่ (กันเปิดชีแล้วลงการ์ดต่อ) */
+  const consumePress = () => (Date.now() - lastPressAt < 420 ? true : false);
+
+  const ghost = () => $('dragGhost');
+  function startDrag(kind, payload, imgSrc) {
+    UI.drag = { kind, payload, cell: null };
+    const g = ghost(); g.querySelector('img').src = imgSrc; g.style.display = 'block';
+    document.body.classList.add('dragging');
+    showDropTargets(kind, payload);
+  }
+  function moveGhost(x, y) { const g = ghost(); g.style.left = x + 'px'; g.style.top = y + 'px'; }
+  function endDrag() {
+    document.body.classList.remove('dragging');
+    ghost().style.display = 'none';
+    [...board.children].forEach(c => c.classList.remove('drop-ok', 'drop-bad'));
+    UI.drag = null; UI.hl = { move: [], atk: [], cells: [], targets: [] };
+  }
+  function showDropTargets(kind, payload) {
+    const S = UI.S; UI.hl = { move: [], atk: [], cells: [], targets: [] };
+    if (kind === 'hand') {
+      const info = Z.cardPlayable(S, human, payload.idx);
+      if (info && info.ok) UI.hl.cells = info.cells.slice();
+    } else if (kind === 'unit') {
+      const u = S.cards[payload.uid]; if (!u) return;
+      UI.hl.move = Z.legalMoveCells(S, u); UI.hl.atk = Z.attackTargets(S, u).map(t => ({ r: t.r, c: t.c }));
+    }
+    applyHL(); applyDropMark();
+  }
+  /* วาด highlight ลง DOM โดยไม่ re-render ทั้งจอ (ใช้ตอนลาก) */
+  function applyHL() {
+    [...board.children].forEach(c => {
+      const r = +c.dataset.r, cc = +c.dataset.c;
+      c.classList.toggle('hl-cell', UI.hl.cells.some(k => k.r === r && k.c === cc));
+      c.classList.toggle('hl-move', UI.hl.move.some(k => k.r === r && k.c === cc));
+      c.classList.toggle('hl-atk', UI.hl.atk.some(k => k.r === r && k.c === cc));
+    });
+  }
+  function applyDropMark() {
+    [...board.children].forEach(c => {
+      const r = +c.dataset.r, cc = +c.dataset.c;
+      const hit = UI.hl.cells.some(k => k.r === r && k.c === cc) || UI.hl.move.some(k => k.r === r && k.c === cc) || UI.hl.atk.some(k => k.r === r && k.c === cc);
+      c.classList.toggle('drop-ok', !!UI.drag && hit);
+    });
+  }
+  function cellUnder(x, y) {
+    const el2 = document.elementFromPoint(x, y);
+    return el2 ? el2.closest('.cell') : null;
+  }
+  /* ลาก-วาง: จับ gesture ที่ window (DOM re-render ระหว่างลากไม่ทำท่าหลุด) */
+  let dg = null;                      // {kind, payload, img, sx, sy, active, node}
+  function beginGesture(kind, payload, img, e, node) {
+    dg = { kind, payload, img, sx: e.clientX, sy: e.clientY, active: false, node };
+    window.addEventListener('pointermove', gestureMove, { passive: false });
+    window.addEventListener('pointerup', gestureUp);
+    window.addEventListener('pointercancel', gestureAbort);
+  }
+  function gestureMove(e) {
+    if (!dg) return;
+    if (!dg.active) {
+      const S = UI.S;
+      if (!S || S.pending || S.active !== human || UI.busy) return gestureAbort();
+      const idx = dg.kind === 'hand' ? dg.payload.idx : null;
+      if (idx != null) { const info = Z.cardPlayable(S, human, idx); if (!info || !info.ok) return gestureAbort(); }
+      const dist = Math.hypot(e.clientX - dg.sx, e.clientY - dg.sy);
+      if (dist < 13) return;
+      if (dg.kind === 'unit') { const cu = UI.S.cards[dg.payload.uid]; if (!cu || cu.rested || cu.side !== human) return gestureAbort(); }
+      dg.active = true;
+      suppressTap = true;
+      startDrag(dg.kind, dg.payload, dg.img);
+      if (dg.node) dg.node.classList.add('dragging');
+    }
+    e.preventDefault();
+    moveGhost(e.clientX, e.clientY); hoverCell(e.clientX, e.clientY);
+  }
+  function gestureUp(e) {
+    const was = dg && dg.active;
+    cleanupGesture();
+    if (!was) { if (UI.drag) endDrag(); suppressTap = false; return; }   /* ห้าม re-render ที่นี่ ไม่งั้น click ของ tap จะหลุดไปเข้า node เก่า */
+    Promise.resolve(dropAt(e.clientX, e.clientY)).catch(err => console.warn(err))
+      .finally(() => { endDrag(); render(); setTimeout(() => { suppressTap = false; }, 60); });
+  }
+  function gestureAbort() {
+    const was = dg && dg.active;
+    cleanupGesture();
+    if (was) { endDrag(); render(); }
+    setTimeout(() => { suppressTap = false; }, 60);
+  }
+  function cleanupGesture() {
+    window.removeEventListener('pointermove', gestureMove);
+    window.removeEventListener('pointerup', gestureUp);
+    window.removeEventListener('pointercancel', gestureAbort);
+    dg = null;
+  }
+  function bindHandDrag(node, idx) {
+    node.addEventListener('pointerdown', e => {
+      const S = UI.S;
+      if (S.active !== human || UI.busy || S.pending) return;
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      const id = S.players[human].hand[idx]; if (!id) return;
+      beginGesture('hand', { idx }, scanOf(card(id)), e, node);
+    }, { passive: true });
+  }
+  function hoverCell(x, y) {
+    const c = cellUnder(x, y);
+    [...board.children].forEach(n => { if (n !== c) n.classList.remove('drop-bad'); });
+    if (!c) return;
+    const r = +c.dataset.r, cc = +c.dataset.c;
+    const legal = UI.hl.cells.some(k => k.r === r && k.c === cc) || UI.hl.move.some(k => k.r === r && k.c === cc) || UI.hl.atk.some(k => k.r === r && k.c === cc);
+    [...board.children].forEach(n => n.classList.toggle('drop-bad', n === c && !legal));
+    UI.drag.cell = legal ? { r, c: cc } : null;
+  }
+  async function dropAt(x, y) {
+    const S = UI.S, d = UI.drag; if (!d) return;
+    const c = cellUnder(x, y);     if (!c) return;
+    const r = +c.dataset.r, cc = +c.dataset.c;     if (d.kind === 'hand') {
+      const info = Z.cardPlayable(S, human, d.payload.idx);
+      if (!info || !info.ok || !info.cells.some(k => k.r === r && k.c === cc)) { hint('วางช่องนั้นไม่ได้'); return; }
+      const res = playAt(d.payload.idx, r, cc);
+      clearSel(); if (res && !res.ok) hint(res.why);
+      if (res && res.awaiting) await waitResponse();
+    } else if (d.kind === 'unit') {
+      const u = S.cards[d.payload.uid];
+      if (!u) return;
+      if (UI.hl.atk.some(k => k.r === r && k.c === cc)) {
+        const t = S.cells[r][cc].unit;
+        const res = Z.attack(S, human, u.uid, t.uid); clearSel();
+        if (res && res.awaiting) await waitResponse();
+        return;
+      }
+      if (!UI.hl.move.some(k => k.r === r && k.c === cc)) { hint('เดินไปช่องนั้นไม่ได้'); return; }
+      const res = Z.move(S, human, u.uid, { r, c: cc }); clearSel();
+      if (res && res.awaiting) await waitResponse();
+    }
+  }
+
+  let fsOn = false;
+  function toggleFull() {
+    const de = document.documentElement, anyd = document;
+    try {
+      if (!anyd.fullscreenElement && !anyd.webkitFullscreenElement) {
+        const rq = de.requestFullscreen ? de.requestFullscreen({ navigationToolbar: 'hide', ui: 'full' }) : de.webkitRequestFullscreen && de.webkitRequestFullscreen();
+        if (rq && rq.catch) rq.catch(() => hint('เบราว์เซอร์ไม่รองรับเต็มจอ'));
+      } else if (anyd.exitFullscreen) anyd.exitFullscreen();
+      else if (anyd.webkitExitFullscreen) anyd.webkitExitFullscreen();
+    } catch (e) { hint('เต็มจอไม่ได้ (' + e.name + ')'); }
+  }
+  function syncFull() {
+    fsOn = !!(document.fullscreenElement || document.webkitFullscreenElement);
+    const b = $('btnFull'); if (b) { b.textContent = fsOn ? '⤡' : '⤢'; b.title = fsOn ? 'ออกจากเต็มจอ' : 'เต็มจอ'; b.classList.toggle('on', fsOn); }
+  }
+
   /* ---------------- selection & input ---------------- */
   function clearSel() { UI.sel = null; UI.hl = { move: [], atk: [], cells: [], targets: [] }; hint(defaultHint()); }
   const defaultHint = () => !UI.S ? '' : (UI.S.active !== human ? 'AI กำลังคิด…' : 'แตะการ์ดในมือเพื่อลง · แตะunit เพื่อเดิน/โจมตี');
@@ -281,7 +477,7 @@
 
   function onHand(i) {
     const S = UI.S;
-    if (S.active !== human || UI.busy || S.pending) return;
+    if (suppressTap || S.active !== human || UI.busy || S.pending) return;
     if (UI.sel && UI.sel.kind === 'hand' && UI.sel.idx === i) { clearSel(); render(); return; }
     const id = S.players[human].hand[i], cd = card(id);
     const info = Z.cardPlayable(S, human, i);
@@ -312,6 +508,13 @@
     else if (res && !res.ok) hint(res.why);
   }
 
+  function playAt(i, r, c) {
+    const S = UI.S, cd = card(S.players[human].hand[i]);
+    if (cd.type === 'terrain') return Z.terrain(S, human, i, { r, c });
+    if (cd.type === 'command') return Z.command(S, human, i, { r, c }, null);
+    return Z.deploy(S, human, i, { r, c });
+  }
+
   async function onCell(r, c) {
     const S = UI.S;
     if (S.active !== human || UI.busy || S.pending) return;
@@ -320,7 +523,7 @@
     if (UI.sel && UI.sel.kind === 'hand') {
       if (!UI.hl.cells.some(k => k.r === r && k.c === c)) { hint('ช่องนั้นเลือกไม่ได้'); return; }
       const i = UI.sel.idx;
-      const res = UI.sel.type === 'terrain' ? Z.terrain(S, human, i, { r, c }) : Z.deploy(S, human, i, { r, c });
+      const res = playAt(i, r, c);
       clearSel(); render();
       if (res && !res.ok) hint(res.why);
       return;
@@ -499,6 +702,9 @@
     if ($('tipX')) $('tipX').onclick = () => $('rotateTip').style.display = 'none';
     $('btnEnd').onclick = humanEnd;
     $('btnCancel').onclick = () => { clearSel(); render(); };
+    $('btnFull').onclick = toggleFull;
+    ['fullscreenchange', 'webkitfullscreenchange'].forEach(t => document.addEventListener(t, syncFull));
+    syncFull();
     $('btnAbility').onclick = () => {
       const u = UI.sel && UI.S.cards[UI.sel.uid]; if (!u) return hint('เลือกunit ก่อน');
       const ab = (card(u.id).abilities || []).find(a => a.kw === 'Activate');

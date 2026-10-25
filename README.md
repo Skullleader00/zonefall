@@ -44,47 +44,25 @@ ops: `cp` `setPower` `draw` `mill` `discard` `ready` `rest` `move(fwd|back|side)
 ใน **ชีรายละเอียดการ์ด** ทุกใบมี `<details>` ของนักพัฒนา บอกว่า ability นั้นต่อ op อะไรแล้ว
 หรือเป็น "แสดงข้อความอย่างเดียว"
 
-## งานภาพ (ใช้ asset ของเกมเอง)
+## งานภาพ & การควบคุม (v1.3)
 
-| ส่วน | ไฟล์ |
-|---|---|
-| ฟอนต์ชื่อการ์ด / UI /ตัวเลข CP | `assets/fonts/zonefall-display.woff2` (FC Twist Bold) · `zonefall-ui.woff2` (FC Iconic) · `zonefall-num.woff2` (SOV LookSit) — subset ไทย+ลาติน รวม ~37KB |
-| กรอบการ์ด + ช่องภาพ | `assets/ui/frame-unit.png` `frame-command.png` `frame-terrain.png` (เจาะหน้าต่างภาพ/กล่องข้อความให้โปร่งใส) |
-| ภาพศิลปะ 52 ใบ | `assets/art/<FILE>.jpg` (crop จากสแกนตามขอบเขตที่วัดจากไฟล์จริง) |
-|เกจ Flare | `assets/ui/icon-flare.png` + pips เพชรส่องแสง (ขวา=ศัตรู สีส้ม, ซ้าย=คุณ สีฟ้า) |
-| Core Point | `assets/ui/icon-corepoint.png` |
-| โซน/กอง | `pile-deck/out/remove/extra.png` |
-| ปุ่ม END / โหมดตอบโต้ / o-p-s | `icon-end.png` `icon-attack.png` `icon-move.png` `panel-choose.png` `rps-paper|rock|scissors.png` |
-| แบนเนอร์เฟส | `icon-phase-draw/main/end.png` |
-| ชนะ/แพ้ | `badge-win.png` `badge-lose.png` |
-| โลโก้ + ไอคอนแอป + faction | `logo.png` `icons/icon-*.png` `assets/faction/*.png` |
-| ฉากสนาม 3 ธีม | `assets/bg/field-blue|green|red.jpg` (เลือกได้ในหน้าแรก) |
+* **การ์ดในมือ = ภาพสแกนเต็มใบ** จาก `img/<SET-NO>.jpg` ไม่มีเฟรมซ้อน (fold ตามที่ขอ)
+*ยูนิตบนสนาม = ภาพ arts ของการ์ดเอง** เต็มช่อง (`assets/art/<FILE>.jpg` ตัดจากหน้าต่างภาพบนสแกนจริง) + badge Cost (วงกลมซ้ายบน) / CP (ขวาบน) / flag (FUSED, TRIGGER, ไม่ล้ม, เสีย CMP)
+* **Terrain = กลืนเป็นพื้นของช่อง** (ภาพเต็มช่อง + cyan ground frame + name Ribbon มุมบนซ้าย + รางลายทแยง) — ช่องที่มี Terrain+ยูนิตจะเห็นทั้งสองชั้น (class `.both`)
+* **ลาก-วาง (drag & drop)**: ลากการ์ดจากมือลงช่องที่ทำได้ (มี ghost + ช่อง `drop-ok` กระพริบ) · ลากยูนิตบนสนาม = เดิน (เขียว) หรือโจมตี (แดง) · Command ลากลงแถวหลัง = ร่ายจริง (ไม่กลายเป็นยูนิต) · ยังรองรับ **แตะ-แล้ว-แตะ** เป็น fallback
+* **กดค้าง (long press ~430ms)** เปิดชีข้อมูลการ์ด ทั้งใบในมือและยูนิต/Terrain บนสนาม (มีเส้นเลือก + ตาราง ops สำหรับคนออกแบบ) และไม่ทำให้การ์ดถูกเลือกโดยไม่ตั้งใจ
+* **ปุ่มเต็มจอ (⤢/⤡)** ที่แถบด้านบน ใช้ได้ทั้ง `requestFullscreen` และ webkit fallback
+* แถบ Flare แนวตั้ง 2 ฝั่ง (ฟ้า = คุณ · ส้ม = ศัตรู) เป็นเกจแก้วพร้อมตัวเลข, Core Point/Flare มีชิปในเพลต, pile 4 โซนเป็น sprite จริงกดดูเนื้อหาได้
+* ฟอนต์จริงจากโฟลเดอร์ Font: `FC Twist Bold` (ชื่อ) · `FC Iconic` (UI) · `SOV LookSit` (ตัวเลข) — subset ไทย+ลาติน 37KB
+* ฉากสนาม 3 ธีม (`field_map01-03`) เลือกในหน้าแรก · ไอคอนแอปจาก `Zonfall_shotcut_red`
 
-เลย์เอาต์ทดสอบที่ 360 · 390 · 430 · 768×1024 · 844×390 · 1024×700 · 1366×850
-(≥1180 แนวแนวนอน = 3 คอลัมน์ มือ/ผู้เล่น · กระดาน · Log)
-
-> หมายเหตุสัญญาอนุญาตฟอนต์: `FC Twist Bold` มาพร้อมไฟล์ "[Non-commercial]" ในโฟลเดอร์ฟอนต์
-> ถ้าโปรเจกต์จะออกเชิงพาณิชย์ ต้องซื้อสิทธิ์หรือเปลี่ยนฟอนต์ตัวแสดงผล
-
-## โครงสร้าง
-
-```
-index.html            โครงจอ
-css/game.css          ธีม + layout responsive
-js/data.js            RULES + การ์ด 52 ใบ + เด็ค 2 ชุด   ← แก้ไฟล์นี้เพื่อเปลี่ยนเกม
-js/engine.js          rule engine (legality, combat, response, effects)
-js/ai.js              AI planner + นโยบายตอบโต้
-js/ui.js              เรนเดอร์ + สัมผัส + driver ตา AI + จอ o/p/s + popups
-sw.js                 service worker (offline-first + warm ภาพการ์ดทีละใบ)
-manifest.webmanifest  PWA
-test/                 harness + play + deckcheck + browser e2e
-assets/, img/, icons/ sprite/ฟอนต์/ภาพการ์ด
-```
+> หมายเหตัสัญญาอนุญาตฟอนต์: `FC Twist Bold` มากับไฟล์ “[Non-commercial]” — ถ้าจะออกเชิงพาณิชย์ต้องซื้อสิทธิ์/เปลี่ยนฟอนต์ตัวแสดงผล
 
 ## ทดสอบ
 
 ```bash
 node test/deckcheck.js                 # กติกาการจัดเด็ค (exit 1 ถ้าผิด)
+node test/interact.js                  # drag & drop + กดค้าง + เต็มจอ (19 บททดสอบ)
 node test/play.js 30 600               # AI vs AI: error / ความยาวเกม / win rate
 node test/play.js 24 600 sylvan sylvan # mirror เพื่อแยก "ผลของฝ่ายเริ่มก่อน" ออกจากเด็ค
 BASE=http://localhost:3000/index.html node test/browser.js   # e2e 5 viewport (ต้องมี playwright)
@@ -94,7 +72,8 @@ npm start                              # เซิร์ฟเวอร์ท้
 ผลรอบล่าสุด: `deckcheck` ผ่านทั้งสองเด็ค · AI-vs-AI **108 เกม 0 error** ·
 ความยาวเฉลี่ย **11.4–13.0 เทิร์น** · mirror match ฝ่ายเริ่มก่อนชนะ **79–83%** ·
 คู่ข้ามเด็ค (SD04 = เครื่องจักร) เหนือกว่า SD01 ชัด (97%) → ยังไม่ปรับสมดุล รอ decision เจ้าของเกม
-`browser.js` ผ่าน 5/5 viewport, ไม่มี pageerror, ไม่มีข้อความ `undefined/NaN` ใน DOM
+`test/browser.js` ผ่าน 5/5 viewport (390×844 · 768×1024 · 844×390 · 1024×700 · 1366×850) — ตรวจว่า token ไม่ล้นช่อง, layout ไม่เกินขอบจอ, รูปการ์ดย่อโหลดครบ, มีเทสต์ drag & กดค้างใน 390
+* `test/interact.js` ผ่าน 19/19: ลาก Terrain/ยูนิต/Command, ลากยูนิตทับช่อง Terrain, กดค้างเปิดชีข้อมูล (ทั้งมือ+สนาม), tap fallback, ปุ่มเต็มจอ
 
 ## สมดุลที่ยังค้าง (ต้องตัดสินใจ)
 

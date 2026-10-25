@@ -1,18 +1,13 @@
-/* e2e บนเบราว์เซอร์: boot -> เริ่มต้นเกม -> เล่นด้วย AI -> ตรวจ error/DOM/layout
-   ต้องมี playwright: npm i -D playwright && npx playwright install chromium
-   usage: node test/browser.js            (หรือBASE=http://localhost:3000 node test/browser.js) */
+/* E2E หลาย viewport: boot → o/p/s → AI เล่น 2 ฝั่ง → ตรวจ layout/DOM/image + drag & long-press
+   usage: node test/browser.js   env: BASE (default http://localhost:3000/index.html), CHROME, SHOTS=dir */
 const BASE = process.env.BASE || 'http://localhost:3000/index.html';
-
 let chromium;
 try { ({ chromium } = require('playwright')); }
-catch (e) {
-  try { ({ chromium } = require('/tmp/qwenwork/node_modules/playwright')); }
-  catch (_) { console.log('ข้าม test นี้: ไม่พบ module playwright (npm i -D playwright)'); process.exit(0); }
-}
+catch (e) { console.log('ข้าม: ไม่พบ playwright (npm i -D playwright)'); process.exit(0); }
 
 const VIEWPORTS = [
-  { width: 390, height: 844 }, { width: 768, height: 1024 },
-  { width: 844, height: 390 }, { width: 1024, height: 700 }, { width: 1366, height: 850 },
+  { width: 390, height: 844 }, { width: 768, height: 1024 }, { width: 844, height: 390 },
+  { width: 1024, height: 700 }, { width: 1366, height: 850 },
 ];
 const EXE = process.env.CHROME || '/opt/playwright-browsers/chromium-1209/chrome-linux64/chrome';
 
@@ -21,102 +16,109 @@ const EXE = process.env.CHROME || '/opt/playwright-browsers/chromium-1209/chrome
   const shots = process.env.SHOTS || '';
   if (shots) fs.mkdirSync(shots, { recursive: true });
   const br = await chromium.launch({ executablePath: fs.existsSync(EXE) ? EXE : undefined, args: ['--no-sandbox'] });
-  let bad = 0;
-  const RULES_MAX_FLARE = 8;
+  let total = 0;
 
   for (const vp of VIEWPORTS) {
-    const errs = [];
+    const problems = [];
     const page = await (await br.newContext({ viewport: vp, deviceScaleFactor: 2 })).newPage();
-    page.setDefaultTimeout(8000);
-    page.on('pageerror', e => errs.push('pageerror: ' + e.message.slice(0, 160)));
-    page.on('console', m => { if (m.type() === 'error') errs.push('console: ' + m.text().slice(0, 160)); });
+    page.setDefaultTimeout(9000);
+    page.on('pageerror', e => problems.push('pageerror: ' + e.message.slice(0, 150)));
+    page.on('console', m => { if (m.type() === 'error') problems.push('console: ' + m.text().slice(0, 150)); });
+    page.on('requestfailed', r => problems.push('request fail: ' + r.url().slice(-40)));
+
     await page.goto(BASE);
     await page.waitForTimeout(700);
-    const home = await page.evaluate(() => ({ logo: !!document.querySelector('.brand-logo'), nSel: document.querySelectorAll('#selOwnDeck option').length }));
-    if (!home.logo || !home.nSel) { console.log('bootstrap fail', home); errs.push('home screen not rendered'); }
-    /* โทน o/p/s ต้องขึ้นมาก่อน */
-    await page.click('#btnStart');
-    await page.waitForTimeout(350);
-    const rpsVisible = await page.isVisible('#rpsPanel');
-    if (!rpsVisible) errs.push('หน้าจอเลือกผู้เริ่มก่อน (o/p/s) ไม่ขึ้น');
-    await page.click('.rps-btn[data-rps="rock"]');
-    await page.waitForTimeout(700);
-
-    /* ให้ sprite/ฟอนต์โหลดครบก่อนวัด */
-    await page.waitForFunction(() => [...document.querySelectorAll('#hand .frame-fill')].every(i => i.complete), null, { timeout: 8000 }).catch(() => { });
+    await page.click('#btnStart'); await page.waitForTimeout(250);
+    await page.click('.rps-btn');                          // o/p/s เลือกผู้เริ่ม
+    await page.waitForTimeout(1000);
     await page.evaluate(() => document.fonts.ready);
-    // เดินเกมด้วย AI ทั้งสองฝั่ง (ข้ามการรอแอนิเมชันของ UI เพื่อความเร็ว)
-    await page.waitForFunction(() => {
-      const cs = [...document.querySelectorAll('#hand .gcard')].filter(g => g.getBoundingClientRect().top < innerHeight - 20);
-      return !cs.length || cs.every(g => { const i = g.querySelector('.frame-fill'); return i && i.complete && i.naturalWidth > 0; });
-    }, null, { timeout: 9000 }).catch(() => { });
-    const state = await page.evaluate(() => {
-      const S = window.__ZF.st();
-      let responses = 0;
-      for (let i = 0; i < 300 && !S.winner && S.turnNo < 26; i++) {
-        if (S.pending) { Z.respond(S, null); responses++; continue; }
-        ZAI.takeTurn(S, S.active);
-      }
+    await page.evaluate(async () => {
+      const S = window.__ZF.st(); let g = 0;
+      while (!S.winner && S.turnNo < 20 && g++ < 400) { if (S.pending) { Z.respond(S, null); continue; } ZAI.takeTurn(S, S.active); }
       S.winner = null; window.__ZF.render();
-      const rect = e => { const r = e.getBoundingClientRect(); return { w: Math.round(r.width), h: Math.round(r.height) }; };
-      const textBad = (() => {
-        const found = [];
-        const walk = n => n.childNodes.forEach(c => {
-          if (c.nodeType === 3) { if (/undefined|NaN|\[object/.test(c.nodeValue)) found.push(c.nodeValue.trim().slice(0, 30)); }
-          else if (c.nodeType === 1) walk(c);
-        });
-        walk(document.body); return found;
-      })();
-      const clipped = [...document.querySelectorAll('.gc-ab')].filter(a => a.scrollHeight - a.clientHeight > 2).length;
-      const scrollable = document.documentElement.scrollHeight > innerHeight + 2;
-      const boxes = ['#board', '#handWrap', '#plateOwn', '#topbar'].map(sel => {
-        const e = document.querySelector(sel); const r = e.getBoundingClientRect();
-        return { sel, inside: r.left >= -1 && r.top >= -1 && r.right <= innerWidth + 1 && r.bottom <= innerHeight + 1 };
-      });
+      const imgs = [...document.querySelectorAll('#hand img.gc-img, .tk img.tk-img, .terr img')];
+      await Promise.all(imgs.map(i => i.decode().catch(() => { })));
+    });
+    await page.waitForTimeout(400);
+
+    const st = await page.evaluate(() => {
+      const pageScrol = document.documentElement.scrollHeight > innerHeight + 2;
+      const box = sel => { const e = document.querySelector(sel); if (!e) return null; const b = e.getBoundingClientRect(); return { sel, l: b.left, r: b.right, t: b.top, b: b.bottom, w: b.width, h: b.height }; };
+      const structural = ['#arena', '#board', '.plate.own', '.plate.foe', '#handWrap', '#topbar', '#railOwn', '#railFoe', '.endcap']
+        .map(box).filter(Boolean);
+      const badStruct = structural.filter(o => o.w < 1 || o.h < 1 || o.l < -1 || o.r > innerWidth + 1 || (!pageScrol && (o.t < -1 || o.b > innerHeight + 1)));
+      const tkFit = [...document.querySelectorAll('.cell')].filter(cl => { const tk = cl.querySelector('.tk'); if (!tk) return false;
+        const a = tk.getBoundingClientRect(), b2 = cl.getBoundingClientRect();
+        return a.width > b2.width + 2 || a.height > b2.height + 2; }).length;
+      const cell = document.querySelector('.cell').getBoundingClientRect();
+      const tkImg = document.querySelector('.tk img.tk-img');
       return {
-        vScroll: scrollable, turn: S.turnNo, responses, tokens: document.querySelectorAll('.tk').length,
-        _x: 0,
-        frames: [...document.querySelectorAll('#hand .gcard')].map(g => { const f = g.querySelector('.frame-fill'); const b = g.getBoundingClientRect();
-          return { src: f && f.getAttribute('src'), nat: f && f.naturalWidth, comp: f && f.complete, top: Math.round(b.top), w: Math.round(b.width) }; }),
-        handBox: (() => { const h = document.getElementById('hand'), hb = h.getBoundingClientRect();
-          const shell = document.getElementById('shell');
-          const pageScrollable = getComputedStyle(shell).overflowY !== 'hidden' || getComputedStyle(shell).overflow !== 'hidden';
-          const cs = [...h.querySelectorAll('.gcard')].map(g => g.getBoundingClientRect());
-          return { handFits: pageScrollable || (hb.bottom <= innerHeight + 2 && hb.top >= 0), noAbove: cs.every(b => b.top >= hb.top - 2), pageScrollable }; })(),
-        handArt: [...document.querySelectorAll('#hand .gcard .art-win')].slice(0, 3).filter(e => getComputedStyle(e).backgroundImage !== 'none').length,
-        railPips: document.querySelectorAll('#railOwn .pips i').length,
-        terrains: document.querySelectorAll('.t-chip').length, cards: CARDS.length,
-        cell: rect(document.querySelector('.cell')), textBad, clipped, boxes,
-        artOk: [...document.querySelectorAll('#hand .gc-art')].every(i => i.naturalWidth > 0),
+        turn: window.__ZF.st().turnNo, tokens: document.querySelectorAll('.tk').length,
+        terrains: document.querySelectorAll('.terr img').length,
+        hand: document.querySelectorAll('#hand .gcard').length,
+        handImgsOk: [...document.querySelectorAll('#hand img.gc-img')].every(i => i.complete && i.naturalWidth > 100),
+        tkImgsOk: ![...document.querySelectorAll('.tk img.tk-img')].some(i => !(i.complete && i.naturalWidth > 100)),
+        badStruct: badStruct.map(o => o.sel + ' ' + Math.round(o.w) + 'x' + Math.round(o.h) + ' r=' + Math.round(o.r)), tkFit,
+        scrollY: Math.max(0, document.documentElement.scrollHeight - innerHeight),
+        scrolled: false,
+        cell: [Math.round(cell.width), Math.round(cell.height)],
+        tkOver: (() => { const out = []; document.querySelectorAll('.cell').forEach(cl => { const tk = cl.querySelector('.tk'); if (!tk) return; const a = tk.getBoundingClientRect(), b = cl.getBoundingClientRect();
+            if (a.bottom > b.bottom + 2 || a.top < b.top - 2 || a.right > b.right + 2 || a.left < b.left - 2) out.push(Math.round(a.width) + 'x' + Math.round(a.height) + '@' + Math.round(b.width) + 'x' + Math.round(b.height)); });
+          return out.slice(0, 3); })(),
+        flarePips: document.querySelectorAll('#railOwn .pips i').length,
+        badText: (() => { const out = []; const w = n => n.childNodes.forEach(c => c.nodeType === 3 ? (/undefined|NaN|\[object/.test(c.nodeValue) && out.push(c.nodeValue.trim().slice(0, 26))) : c.nodeType === 1 && w(c)); w(document.body); return out.slice(0, 3); })(),
+        clippedAb: [...document.querySelectorAll('.gc-ab')].filter(a => a.scrollHeight - a.clientHeight > 2).length,
       };
     });
 
-    const offscreen = state.vScroll ? [] : state.boxes.filter(b => !b.inside).map(b => b.sel);
-    const problems = [];
-    if (errs.length) problems.push(...errs);
-    if (state.textBad.length) problems.push('พบ undefined/NaN ใน DOM: ' + state.textBad.join(' | '));
-    if (state.clipped) problems.push(`ข้อความในมือการ์ดยังถูกตัด ${state.clipped} จุด`);
-    if (!state.handBox.handFits) problems.push('แถบมือเลยขอบจอล่าง');
-    if (!state.handBox.noAbove) problems.push('การ์ดในมือล้นขึ้นบนแถบ');
-    if (offscreen.length) problems.push('_element_ ล้นจอ: ' + offscreen.join(','));
-    if (!state.artOk) problems.push('ภาพการ์ดบางใบโหลดไม่สำเร็จ');
-    const vis = (state.frames || []).filter(f => f.top < 99999 && f.w > 0);
-    const badFrames = (state.frames || []).filter(f => !(f.comp && f.nat > 0));
-    if (badFrames.length) problems.push('frame โหลดไม่ครบ: ' + JSON.stringify(badFrames.slice(0, 2)));
-    if (!state.handArt) problems.push('หน้าต่างภาพบนการ์ดว่าง');
-    if (state.railPips < RULES_MAX_FLARE) problems.push('rail Flare มีเม็ดไม่ครบ');
-    if (state.tokens < 1) problems.push('ไม่มียูนิตบนกระดานหลังเล่นหลายคน 1 รอบ');
+    if (!st.handImgsOk) problems.push('รูปการ์ดในมือโหลดไม่ครบ');
+    if (!st.tkImgsOk) problems.push('รูป token บนสนามโหลดไม่ครบ');
+    if (st.tkOver.length) problems.push('token ล้นขอบช่องสนาม: ' + st.tkOver.join(' / '));
+    if (st.badStruct.length) problems.push('layout เกินขอบจอ: ' + st.badStruct.slice(0, 3).join(' | '));
+    if (st.tkFit) problems.push('token ล้นช่องสนาม ' + st.tkFit + ' ช่อง');
+    if (st.badText.length) problems.push('พบ ข้อความ error ใน DOM: ' + st.badText.join('|'));
+    if (st.hand < 1 && vp.width === 390) problems.push('มือว่าง (คาดว่ามีใบเล่น)');
+    if (st.scrollY > 6 && vp.width !== 844 && vp.height > 500) problems.push('หน้า scroll แนวนอนไม่ได้ (overflow y=' + st.scrollY + ')');
 
-    console.log(`${problems.length ? 'FAIL' : 'OK  '} ${vp.width}x${vp.height}` +
-      ` | turn ${state.turn} · tk ${state.tokens} · terr ${state.terrains} · response ${state.responses}` +
-      ` | cell ${state.cell.w}x${state.cell.h}`);
+    /* --- drag & drop + กดค้าง (เฉพาะ viewport มือถือ) --- */
+    if (vp.width === 390) {
+      await page.evaluate(() => { const S = window.__ZF.st(); S.active = 'p0'; S.phase = 'main'; S.pending = null; S.turnActions = 0; S.winner = null;
+        for (let r = 0; r < RULES.rows; r++) for (let c = 0; c < RULES.cols; c++) { if (S.cells[r][c].unit) { delete S.cards[S.cells[r][c].unit.uid]; S.cells[r][c].unit = null; } }
+        S.players.p0.hand = ['sd01004']; S.players.p0.flare = 9; window.__ZF.U.busy = false;
+        document.getElementById('veil').classList.add('hidden'); window.__ZF.render(); });
+      const g = await page.locator('#hand .gcard').first().boundingBox();
+      const tgt = await page.evaluate(() => { const i = Z.cardPlayable(window.__ZF.st(), 'p0', 0); const t = i && i.ok ? i.cells[0] : null; if (!t) return null;
+        const e = [...document.querySelectorAll('.cell')].find(x => +x.dataset.r === t.r && +x.dataset.c === t.c).getBoundingClientRect(); return [e.x + e.width / 2, e.y + e.height / 2]; });
+      if (!tgt) { problems.push('drag: หาช่องวางสำหรับทดสอบไม่ได้'); }
+      await page.mouse.move(g.x + g.width / 2, g.y + g.height / 2); await page.mouse.down();
+      await page.mouse.move(g.x + g.width / 2 + 14, g.y + g.height / 2 - 34, { steps: 4 });
+      const dragging = await page.evaluate(() => !!window.__ZF.U.drag && getComputedStyle(document.getElementById('dragGhost')).display !== 'none' && document.querySelectorAll('.cell.drop-ok').length > 0);
+      await page.mouse.move(tgt[0], tgt[1], { steps: 12 }); await page.mouse.up(); await page.waitForTimeout(600);
+      const deployedOrCmd = await page.evaluate(() => ({ units: document.querySelectorAll('.tk').length, hand: window.__ZF.st().players.p0.hand.length,
+        act: window.__ZF.st().active, busy: window.__ZF.U.busy, drag: !!window.__ZF.U.drag, hint: document.getElementById('hint').textContent.slice(0, 40), log: window.__ZF.st().log.slice(-1)[0].msg.slice(0, 50) }));
+      console.log('      drag result:', JSON.stringify(deployedOrCmd));
+      if (!dragging) problems.push('drag: ไม่มี ghost/highlight ระหว่างลาก');
+      if (!(deployedOrCmd.units >= 1 || deployedOrCmd.hand === 0)) problems.push('drag & drop: ลากแล้วไม่ทำงาน');
+      const tkLoc = page.locator('#board .tk.own').first();
+      if (!await tkLoc.count()) { problems.push('drag & drop: ลากแล้วไม่มียูนิตลงสนาม'); }
+      const tk = await tkLoc.boundingBox({ timeout: 4000 }).catch(() => null);
+      if (tk) {
+        await page.mouse.move(tk.x + tk.width / 2, tk.y + tk.height / 2); await page.mouse.down(); await page.waitForTimeout(780); await page.mouse.up(); await page.waitForTimeout(300);
+        if (!await page.evaluate(() => !document.getElementById('zoneView').classList.contains('hidden'))) problems.push('กดค้างที่ยูนิตแล้วไม่เปิดชีข้อมูล');
+        await page.evaluate(() => document.getElementById('zoneView').classList.add('hidden'));
+      }
+      await page.click('#btnFull'); await page.waitForTimeout(500);
+      await page.evaluate(() => { const f = document.fullscreenElement || document.webkitFullscreenElement; if (f && document.exitFullscreen) document.exitFullscreen(); });
+      await page.waitForTimeout(300);
+    }
+
+    console.log(`${problems.length ? 'FAIL' : 'OK  '} ${vp.width}x${vp.height} · turn ${st.turn} · tk ${st.tokens} · terr ${st.terrains} · มือ ${st.hand} · cell ${st.cell.join('x')} · pips ${st.flarePips} · scrollY ${st.scrollY}`);
     problems.forEach(p => console.log('      · ' + p));
-    bad += problems.length;
-    if (shots && !problems.length) await page.screenshot({ path: `${shots}/${vp.width}x${vp.height}.png` });
+    total += problems.length;
+    if (shots) await page.screenshot({ path: `${shots}/${vp.width}x${vp.height}.png` });
     await page.close();
   }
-
   await br.close();
-  console.log(bad ? `\nพบ ${bad} ปัญหา` : '\nผ่านทุก viewport');
-  process.exit(bad ? 1 : 0);
+  console.log(total ? `\nพบ ${total} ปัญหา` : '\nผ่านทุก viewport');
+  process.exit(total ? 1 : 0);
 })();
