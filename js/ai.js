@@ -14,6 +14,12 @@ const ZAI = (function () {
   }
 
   /* ---------- ตอบโต้ (หน้าต่าง Declaration-Response) ---------- */
+  function aiTrigger(S, side, cardId, ab) {
+    const t = (ab[0].ops || []);
+    if (t.some(o => ['point','core','draw','flare','toHand'].includes(o.op))) return true;
+    if (t.some(o => o.op === 'mill') && S.players[side].deck.length < 8) return false;
+    return S.players[side].hand.length < 7 || t.some(o => o.op === 'cp' || o.op === 'destroy');
+  }
   function respond(S, side, ev, opts) {
     const p = S.players[side];
     if (!opts.length) return null;
@@ -58,11 +64,14 @@ const ZAI = (function () {
   }
 
   /* ---------- แพลนหลัก ---------- */
+  function blocked(S) { return !!S.uiAsk || !!S.pending; }
   function takeTurn(S, side) {
     const p = S.players[side];
     let guard = 0;
+    if (blocked(S)) return 'pending';
 
     /* 0) Arc-Flare → เรียก Arcanum ลง Core Zone เป็นแอ็คแรก */
+    if (blocked(S)) return 'pending';
     const arc = Z.arcPlayable(S, side);
     if (arc.ok) {
       const opt = arc.options.find(o => o.withArc) || arc.options.find(o => o.payCost && card(o.id).cost <= Math.max(0, p.flare - 2));
@@ -82,6 +91,7 @@ const ZAI = (function () {
       if (!cell) break;
       const res = Z.terrain(S, side, i, cell);
       if (res && res.awaiting) return 'pending';
+      if (blocked(S)) return 'pending';
       if (res && res.ok) break;
     }
 
@@ -102,6 +112,7 @@ const ZAI = (function () {
       const cell = info.cells.sort((a, b) => Math.abs(a.c - 1) - Math.abs(b.c - 1))[0];
       const res = Z.deploy(S, side, pick.idx, cell);
       if (res && res.awaiting) return 'pending';
+      if (blocked(S)) return 'pending';
       if (!res || !res.ok) break;
     }
 
@@ -130,6 +141,7 @@ const ZAI = (function () {
       if (!use) continue;
       const res = Z.command(S, side, i, null, tgtUid);
       if (res && res.awaiting) return 'pending';
+      if (blocked(S)) return 'pending';
       if (res && res.ok) return stepContinue(S, side);
     }
 
@@ -139,6 +151,7 @@ const ZAI = (function () {
   /* 4) เดิน + โจมตี ตามค่าที่ทำได้ต่อการกระทำหนึ่งครั้ง */
   function stepContinue(S, side) {
     let n = 0;
+    if (blocked(S)) return 'pending';
     while (n++ < 24) {
       const mine = Z.units(S, side).filter(u => !u.rested && !u.arc);
       if (!mine.length) break;
@@ -187,6 +200,7 @@ const ZAI = (function () {
       else if (a.kind === 'move') res = Z.move(S, side, a.u.uid, a.cel);
       else res = Z.ability(S, side, a.u.uid);
       if (res && res.awaiting) return 'pending';
+      if (blocked(S)) return 'pending';
       if (!res || !res.ok) break;
     }
     const r = Z.endTurn(S);
@@ -195,7 +209,7 @@ const ZAI = (function () {
   }
 
   const foe = s => (s === 'p0' ? 'p1' : 'p0');
-  return { takeTurn, respond, foe };
+  return { takeTurn, respond, aiTrigger, blocked, foe };
 })();
 
 /* ผูกตัวตอบโต้เข้ากับ state ทุกครั้งที่เริ่มเกมใหม่ */
@@ -204,6 +218,7 @@ const ZAI = (function () {
   Z.init = function (o) {
     const S = _init(o);
     S.aiRespond = ZAI.respond;
+    S.aiTrigger = ZAI.aiTrigger;
     return S;
   };
 })();

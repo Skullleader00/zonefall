@@ -26,7 +26,7 @@ const EXE = process.env.CHROME || '/opt/playwright-browsers/chromium-1209/chrome
     page.on('console', m => { if (m.type() === 'error') problems.push('console: ' + m.text().slice(0, 150)); });
     page.on('requestfailed', r => problems.push('request fail: ' + r.url().slice(-40)));
 
-    await page.goto(BASE);
+    await page.goto(BASE + '?_=' + Date.now());
     await page.waitForTimeout(700);
     await page.click('#btnStart'); await page.waitForTimeout(250);
     await page.click('.rps-btn');                          // o/p/s เลือกผู้เริ่ม
@@ -82,10 +82,20 @@ const EXE = process.env.CHROME || '/opt/playwright-browsers/chromium-1209/chrome
 
     /* --- drag & drop + กดค้าง (เฉพาะ viewport มือถือ) --- */
     if (vp.width === 390) {
-      await page.evaluate(() => { const S = window.__ZF.st(); S.active = 'p0'; S.phase = 'main'; S.pending = null; S.turnActions = 0; S.winner = null;
+      /* รอให้ AI เล่นจบคิวก่อน แล้วค่อยบังคับสถานการณ์ทดสอบการลาก */
+      await page.waitForFunction(() => { const S = window.__ZF.st(); return S && !S.winner && !S.pending && !S.uiAsk && !window.__ZF.U.busy; }, null, { timeout: 12000 }).catch(() => { });
+      await page.waitForTimeout(400);
+      await page.evaluate(() => {
+        const S = window.__ZF.st();
+        S.active = 'p0'; S.phase = 'main'; S.pending = null; S.uiAsk = null; S.turnActions = 0; S.winner = null;
         for (let r = 0; r < RULES.rows; r++) for (let c = 0; c < RULES.cols; c++) { if (S.cells[r][c].unit) { delete S.cards[S.cells[r][c].unit.uid]; S.cells[r][c].unit = null; } }
-        S.players.p0.hand = ['sd01004']; S.players.p0.flare = 9; window.__ZF.U.busy = false;
-        document.getElementById('veil').classList.add('hidden'); window.__ZF.render(); });
+        S.players.p0.hand = ['sd01004']; S.players.p0.flare = 9; S.players.p0.deck = S.players.p0.deck || [];
+        window.__ZF.U.busy = false; window.__ZF.U.human = 'p0';
+        document.getElementById('veil').classList.add('hidden'); window.__ZF.render();
+      });
+      await page.waitForTimeout(250);
+      await page.evaluate(() => { const S = window.__ZF.st(); S.active = 'p0'; window.__ZF.U.busy = false; window.__ZF.render(); });
+      await page.waitForTimeout(150);
       const g = await page.locator('#hand .gcard').first().boundingBox();
       const tgt = await page.evaluate(() => { const i = Z.cardPlayable(window.__ZF.st(), 'p0', 0); const t = i && i.ok ? i.cells[0] : null; if (!t) return null;
         const e = [...document.querySelectorAll('.cell')].find(x => +x.dataset.r === t.r && +x.dataset.c === t.c).getBoundingClientRect(); return [e.x + e.width / 2, e.y + e.height / 2]; });
@@ -93,12 +103,14 @@ const EXE = process.env.CHROME || '/opt/playwright-browsers/chromium-1209/chrome
       await page.mouse.move(g.x + g.width / 2, g.y + g.height / 2); await page.mouse.down();
       await page.mouse.move(g.x + g.width / 2 + 14, g.y + g.height / 2 - 34, { steps: 4 });
       const dragging = await page.evaluate(() => !!window.__ZF.U.drag && getComputedStyle(document.getElementById('dragGhost')).display !== 'none' && document.querySelectorAll('.cell.drop-ok').length > 0);
-      await page.mouse.move(tgt[0], tgt[1], { steps: 12 }); await page.mouse.up(); await page.waitForTimeout(600);
+      await page.mouse.move(tgt[0], tgt[1], { steps: 12 }); await page.mouse.up(); await page.waitForTimeout(1400);
       const deployedOrCmd = await page.evaluate(() => ({ units: document.querySelectorAll('.tk').length, hand: window.__ZF.st().players.p0.hand.length,
         act: window.__ZF.st().active, busy: window.__ZF.U.busy, drag: !!window.__ZF.U.drag, hint: document.getElementById('hint').textContent.slice(0, 40), log: window.__ZF.st().log.slice(-1)[0].msg.slice(0, 50) }));
       console.log('      drag result:', JSON.stringify(deployedOrCmd));
       if (!dragging) problems.push('drag: ไม่มี ghost/highlight ระหว่างลาก');
       if (!(deployedOrCmd.units >= 1 || deployedOrCmd.hand === 0)) problems.push('drag & drop: ลากแล้วไม่ทำงาน');
+      await page.evaluate(() => { const S = window.__ZF.st(); if (S.uiAsk) window.__ZF.answer(null); });
+      await page.waitForTimeout(500);
       const tkLoc = page.locator('#board .tk.own').first();
       if (!await tkLoc.count()) { problems.push('drag & drop: ลากแล้วไม่มียูนิตลงสนาม'); }
       const tk = await tkLoc.boundingBox({ timeout: 4000 }).catch(() => null);
@@ -107,6 +119,20 @@ const EXE = process.env.CHROME || '/opt/playwright-browsers/chromium-1209/chrome
         if (!await page.evaluate(() => !document.getElementById('zoneView').classList.contains('hidden'))) problems.push('กดค้างที่ยูนิตแล้วไม่เปิดชีข้อมูล');
         await page.evaluate(() => document.getElementById('zoneView').classList.add('hidden'));
       }
+      /* --- ตรวจว่าหน้าต่าง “ขอให้เลือก” บังคับจริง แล้วปิดได้ --- */
+      const askState = await page.evaluate(() => {
+        const S = window.__ZF.st();
+        const v = document.getElementById('askVeil'), pn = document.getElementById('askPanel');
+        const vis = e => getComputedStyle(e).display !== 'none';
+        return { pendingAsk: !!S.uiAsk, kind: S.uiAsk && S.uiAsk.kind, panelVisible: vis(pn), veilVisible: vis(v), cards: document.querySelectorAll('#askCards .ask-card, #askActs .parallelogram').length };
+      });
+      if (askState.pendingAsk && !askState.panelVisible) problems.push('ask: มียอดถามแต่แผงไม่แสดง');
+      if (askState.pendingAsk && !askState.cards) problems.push('ask: แผงเปิดแต่ไม่มีตัวเลือก');
+      if (!askState.pendingAsk && (askState.panelVisible || askState.veilVisible)) problems.push('ask: แผง/ม่านค้างทั้งที่ไม่มีการเลือก');
+      await page.evaluate(() => { if (window.__ZF.st().uiAsk) window.__ZF.answer(null); });
+      await page.waitForTimeout(400);
+      const askAfter = await page.evaluate(() => ({ pending: !!window.__ZF.st().uiAsk, panel: getComputedStyle(document.getElementById('askPanel')).display !== 'none', veil: getComputedStyle(document.getElementById('askVeil')).display !== 'none' }));
+      if (askAfter.panel || askAfter.veil) problems.push('ask: ตอบแล้วยังไม่ปิดแผง (' + JSON.stringify(askAfter) + ')');
       await page.click('#btnFull'); await page.waitForTimeout(500);
       await page.evaluate(() => { const f = document.fullscreenElement || document.webkitFullscreenElement; if (f && document.exitFullscreen) document.exitFullscreen(); });
       await page.waitForTimeout(300);

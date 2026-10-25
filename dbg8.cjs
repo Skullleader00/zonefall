@@ -1,0 +1,24 @@
+const { chromium } = require('playwright'); const fs = require('fs');
+(async () => {
+  const g = '/opt/playwright-browsers/chromium-1209/chrome-linux64/chrome';
+  const br = await chromium.launch({ executablePath: fs.existsSync(g) ? g : undefined, args: ['--no-sandbox'] });
+  const page = await (await br.newContext({ viewport: { width: 390, height: 844 } })).newPage();
+  page.on('pageerror', e => console.log('PE:', e.message.slice(0, 160)));
+  page.on('console', m => console.log('C:', m.text().slice(0, 130)));
+  await page.goto('http://localhost:3000/index.html'); await page.waitForTimeout(800);
+  await page.click('#btnStart'); await page.waitForTimeout(250); await page.click('.rps-btn'); await page.waitForTimeout(1100);
+  await page.evaluate(() => { const S = window.__ZF.st(); S.active='p0'; S.phase='main'; S.players.p0.flare=8; S.players.p0.hand=['sd01001']; window.__ZF.render(); });
+  const pre = await page.evaluate(() => ({ info: Z.cardPlayable(window.__ZF.st(),'p0',0), busy: window.__ZF.U.busy, pend: !!window.__ZF.st().pending }));
+  console.log('pre', JSON.stringify(pre).slice(0,150));
+  const b = await page.locator('#hand .gcard').first().boundingBox();
+  const t0 = pre.info.cells[0];
+  const tp = await page.evaluate(([r,c]) => { const el=[...document.querySelectorAll('.cell')].find(e=>+e.dataset.r===r&&+e.dataset.c===c).getBoundingClientRect(); return [el.x+el.width/2, el.y+el.height/2]; }, [t0.r,t0.c]);
+  await page.mouse.move(b.x+b.width/2, b.y+b.height/2); await page.mouse.down();
+  await page.mouse.move(b.x+b.width/2, b.y+b.height/2-25, {steps:3});
+  console.log('mid', JSON.stringify(await page.evaluate(()=>({drag:!!window.__ZF.U.drag, hl:window.__ZF.U.hl.cells.length, ghost:getComputedStyle(document.getElementById('dragGhost')).display}))));
+  await page.mouse.move(tp[0], tp[1], {steps:10});
+  console.log('hover', JSON.stringify(await page.evaluate(()=>({cellMark:document.querySelectorAll('.cell.drop-ok').length, target:(window.__ZF.U.drag&&window.__ZF.U.drag.cell)||null}))));
+  await page.mouse.up(); await page.waitForTimeout(600);
+  console.log('post', JSON.stringify(await page.evaluate(()=>({hand:window.__ZF.st().players.p0.hand.length, tk:document.querySelectorAll('.tk').length, tkimg:document.querySelectorAll('.tk .tk-img').length, drag:!!window.__ZF.U.drag, log:window.__ZF.st().log.slice(-1)[0].msg.slice(0,50)}))));
+  await br.close();
+})();

@@ -1,8 +1,8 @@
 /* Advance Clash — service worker (offline-first shell) */
-const CACHE = 'zonefall-v7';
+const CACHE = 'zonefall-v11';
 const SHELL = [
   './', './index.html', './css/game.css',
-  './js/data.js', './js/engine.js', './js/ai.js', './js/ui.js',
+  './js/data.js', './js/ability-ops.js', './js/engine.js', './js/effects.js', './js/ai.js', './js/ui.js',
   './assets/fonts/zonefall-display.woff2', './assets/fonts/zonefall-ui.woff2', './assets/fonts/zonefall-num.woff2',
   './assets/ui/logo.png', './assets/ui/icon-corepoint.png', './assets/ui/icon-flare.png', './assets/ui/icon-end.png',
   './assets/ui/icon-attack.png', './assets/ui/icon-move.png', './assets/ui/icon-phase-main.png',
@@ -31,11 +31,22 @@ const CARD_ART = ['SB01-001','SB01-002','SB01-003','SB01-004','SB01-005','SB01-0
 self.addEventListener('activate', e => {
   e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim()));
 });
+/* โค้ด (html/js/css) = network before cache → แก้แล้วเห็นผลทันที ไม่ต้องรอ SW รอบใหม่
+   ภาพ/ฟอนต์ = cache before network → เล่นออฟไลน์ได้เร็ว */
+const CODE = /\.(js|css|html|webmanifest)(\?|$)/i;
 self.addEventListener('fetch', e => {
   const req = e.request;
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
   if (url.origin !== location.origin) return;              // ปล่อย Google Fonts ไปที่ network
+  if (CODE.test(url.pathname)) {
+    e.respondWith(fetch(req).then(res => {
+      const copy = res.clone();
+      caches.open(CACHE).then(c => c.put(req, copy));
+      return res;
+    }).catch(() => caches.match(req).then(hit => hit || caches.match('./index.html'))));
+    return;
+  }
   e.respondWith(
     caches.match(req).then(hit => hit || fetch(req).then(res => {
       const copy = res.clone();

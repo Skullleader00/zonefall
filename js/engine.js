@@ -50,6 +50,11 @@ const Z = (function () {
   }
   function cellCpBonus(S, u) {
     let n = 0;
+    const t = cell(S, u.r, u.c) && cell(S, u.r, u.c).terrain;
+    if (t) {
+      const st = staticOf(card(t.id), 'cell');
+      if (st && st.cp && (!st.color || card(u.id).color === st.color) && u.side === S.active) n += st.cp;
+    }
     cellFx(S, u.r, u.c).forEach(e => {
       if (!e || e.op !== 'cp' || e.to !== 'unitInCell') return;
       if (e.color && card(u.id).color !== e.color) return;
@@ -58,9 +63,15 @@ const Z = (function () {
     });
     return n;
   }
+
   function effCp(S, u) {
     const cd = card(u.id); if (!cd) return 0;
-    const base = (u.setPowerBase != null ? u.setPowerBase : (cd.cp || 0));
+    let base = (u.setPowerBase != null ? u.setPowerBase : (cd.cp || 0));
+    const ws = staticOf(cd, 'witchSetPower');
+    if (ws && (cd.tribe || '').includes('Witch')) {
+      const n = units(S, u.side).filter(x => (card(x.id).tribe || '').includes('Witch')).length;
+      if (n === (ws.count || 1)) base = ws.value;
+    }
     let v = base + (u.permCp || 0) + (u.buffCp || 0) + (u.battleCp || 0) - (u.dmg || 0);
     v += cellCpBonus(S, u);
     if (u.fused && u.fused.length) {
@@ -93,6 +104,7 @@ const Z = (function () {
     const S = {
       seed, turnNo: 0, active: 'p0', phase: 'main', cells: [], cards: {}, log: [], pending: null,
       winner: null, humanSide: opts.humanSide || 'p0', first: opts.p1GoesFirst ? 'p1' : 'p0',
+      fxq: [], uiAsk: null, reveal: null, seq: 0,
       arcFlareUsedType: {}, turnActions: 0, rngFn: rng, players: {},
     };
     for (let r = 0; r < R.rows; r++) { S.cells.push([]); for (let c = 0; c < R.cols; c++) S.cells[r].push({ terrain: null, unit: null }); }
@@ -126,8 +138,35 @@ const Z = (function () {
     }
   }
 
+  /* เปิดการ์ดจากยอดสมุด N ใบ (เก็บไว้ใน S.reveal เพื่อแสดงหน้าต่าง) */
+  function revealTop(S, side, n, reason) {
+    const p2 = S.players[side];
+    const ids = [];
+    for (let k = 0; k < (n || 1); k++) { if (!p2.deck.length) break; ids.push(p2.deck.shift()); }
+    S.reveal = { side, ids, reason: reason || 'เปิดดู', at: S.turnNo };
+    fxq(S, { t: 'reveal', side, ids, reason: reason || 'เปิดดู' });
+    if (ids.length) log(S, `  ▹ เปิดดู ${ids.length} ใบบนสมุด (${reason || ''}): ${ids.map(i => card(i).name).join(' / ')}`, 'info');
+    else log(S, '  ▹ สมุดหมด — เปิดดูไม่ได้', 'dim');
+    return ids;
+  }
+  function restToBottom(S, side, ids) {
+    const p2 = S.players[side];
+    (ids || []).forEach(id => { const i = p2.deck.indexOf(id); if (i < 0) { const j = p2.hand.indexOf(id); if (j >= 0) p2.hand.splice(j, 1); } });
+    p2.deck.push.apply(p2.deck, ids || []);
+  }
+  function toHand(S, side, id) {
+    const p2 = S.players[side];
+    if (!id) return;
+    if (p2.hand.length >= R.handMax) { p2.remove.push(id); log(S, `  ↳ มือเต็ม ${R.handMax} — [${card(id).name}] ออกจากเกม (Removezone)`, 'bad'); }
+    else p2.hand.push(id);
+  }
+
   function mill(S, side, n) {
     const p = S.players[side];
+    if (n === 1) {                                   /* Sylvan Mystery: Mill 1 → Mill 2 */
+      const t = terrains(S, side);
+      if (t.some(x => (staticOf(card(x.id), 'millDoubles') || {}).fromTerrains && t.length >= staticOf(card(x.id), 'millDoubles').fromTerrains)) n = 2;
+    }
     for (let i = 0; i < n; i++) { if (!p.deck.length) break; p.outzone.push(p.deck.shift()); }
     log(S, `Mill ${n} → Outzone (${p.deckName})`, 'dim');
   }
@@ -150,6 +189,8 @@ const Z = (function () {
   }
   const destroyTo = (S, o, verb) => {
     const cd = card(o.id);
+    fxq(S, { t: 'destroy', uid: o.uid, side: o.side, cardId: o.id });
+    if (o === S.cards[o.uid] && cd.type === 'unit') hook('unitDied', S, { side: o.side, uid: o.uid, cardId: o.id, color: cd.color });
     if (cd.type === 'arcanum') { leaveField(S, o, 'extra'); log(S, `${verb} [${cd.name}] → Extra Zone (หงายหน้า, ใช้ไม่ได้อีก)`, 'bad'); }
     else { if (hasFlag(cd, 'token')) { leaveField(S, o, 'extra'); log(S, `${verb} [${cd.name}] → Extra Zone (Token)`, 'bad'); } else { leaveField(S, o, 'outzone'); log(S, `${verb} [${cd.name}] → Outzone`, 'bad'); } }
     (o.fused || []).forEach(fid => leaveField(S, S.cards[fid] || { id: fid, side: o.side, r: 9, c: 9 }, 'outzone'));
@@ -197,19 +238,35 @@ const Z = (function () {
     return S;
   }
 
+  /* Trigger Check: เปิดใบบนสุดโชว์ก่อน (มีแอนิเมชัน) — ถ้ามี [Trigger] เจ้าของเลือกได้ว่าใช่เอฟเฟกต์หรือไม่
+     ถ้าไม่ใช้ (หรือไม่มีเอฟเฟกต์) การ์ดขึ้นมือตามปกติ */
   function triggerCheck(S, side) {
     const p = S.players[side];
-    if (!p.deck.length) return;
+    if (!p.deck.length) { log(S, `⟐ Trigger Check — สมุดว่าง (${p.deckName})`, 'dim'); return; }
     const id = p.deck.shift();
     const cd = card(id);
     const trig = (cd.abilities || []).filter(a => a.kw === 'Trigger');
-    log(S, `⟐ Trigger Check (${p.deckName}): [${cd.name}]`, 'info');
-    if (trig.length) {
-      p.hand.push(id);
-      trig.forEach(a => { fx(S, { side, uid: null }, a.ops || [], { triggerCard: id }); });
-      const keep = trig.some(a => (a.ops || []).length === 0 || (a.ops || []).some(o => o.op === 'draw'));
-      if (!keep) { const i = p.hand.lastIndexOf(id); if (i >= 0) { p.hand.splice(i, 1); p.outzone.push(id); log(S, `  ↳ [${cd.name}] ถูกใช้แล้ว → Outzone`, 'dim'); } }
-    } else p.hand.push(id);
+    S.reveal = { side, ids: [id], reason: 'Trigger Check', at: S.turnNo };
+    fxq(S, { t: 'trigger', side, cardId: id, hasAbility: trig.length > 0 });
+    log(S, `⟐ Trigger Check (${p.deckName}): [${cd.name}]`, trig.length ? 'good' : 'info');
+    const useIt = () => {
+      fxq(S, { t: 'effectCard', side, cardId: id });
+      trig.forEach(a => { fx(S, { side, uid: null, cardId: id }, a.ops || [], { triggerCard: id, cardId: id }); });
+      const k = p.hand.indexOf(id); if (k >= 0) p.hand.splice(k, 1);
+      const used = (p.hand.indexOf(id) < 0);
+      if (trig.some(a => (a.ops || []).some(o => o.op === 'banish'))) { p.remove.push(id); log(S, `  ↳ ใช้ [→ Removezone`, 'dim'); }
+      else { p.outzone.push(id); log(S, `  ↳ ใช้ [${cd.name}] → Outzone`, 'dim'); }
+      void used;
+    };
+    const keepIt = () => { toHand(S, side, id); if (trig.length) log(S, `  ↳ ไม่ใช้เอฟเฟกต์ — [${cd.name}] ขึ้นมือ`, 'dim'); };
+    if (!trig.length) { keepIt(); return; }
+    if (!isHuman(S, side)) { const go = S.aiTrigger ? S.aiTrigger(S, side, id, trig) : true; if (go) useIt(); else keepIt(); return; }
+    S.uiAsk = {
+      kind: 'triggerUse', title: 'Trigger Check — ใช้เอฟเฟกต์ของการ์ดใบนี้?', cardIds: [id], side,
+      abilityText: trig.map(a => a.text).join(' / '),
+      resume: v => { if (v === 'use' || v === true) useIt(); else keepIt(); },
+    };
+    fxq(S, { t: 'ask', kind: 'triggerUse' });
   }
 
   /* ========================================================== ผลของความสามารถ (ops) */
@@ -227,16 +284,101 @@ const Z = (function () {
     }
   }
 
+  /* ---------- คิวแอนิเมชัน (UI เล่นผ่าน drainFx) ---------- */
+  function fxq(S, ev) { (S.fxq = S.fxq || []).push(Object.assign({ id: ++S.seq }, ev)); }
+  function drainFx(S) { const q = S.fxq || []; S.fxq = []; return q; }
+
+  /* ---------- ระบบ "ขอให้เลือก": เป้าหมาย / เปิดสมุด / ทิ้งการ์ด / Outzone / ทริกเกอร์ ---------- */
+  const isHuman = (S, side) => side === S.humanSide;
+  function ask(S, spec) {
+    const decider = spec.bySide || spec.side;
+    if (!isHuman(S, decider)) {                     // ฝั่ง AI ให้เลือกอัตโนมัติ
+      const v = spec.auto ? spec.auto(S) : null;
+      spec.resume(v);
+      return { auto: true };
+    }
+    S.uiAsk = spec;
+    fxq(S, { t: 'ask', kind: spec.kind });
+    return { paused: true };
+  }
+  function pauseOp(S, src, op, ctx, ops, i, spec) {
+    /* spec.replay = op เดิมต้องทำงานซ้ำหลังได้เป้าหมาย (เช่น op ที่ to:'target')
+       ไม่งั้นถือว่าการเลือกครั้งนี้คือ “ข้อมูลของผล” → ไป op ถัดไป */
+    spec.resume = v => {
+      if (spec.onPick) spec.onPick(v);
+      const canReplay = spec.replay && v != null && (src.tgt || src.tgts || src.pick);
+      runOps(S, src, ops, ctx, canReplay ? i : i + 1);
+    };
+    const r = ask(S, spec);
+    if (r.paused) ctx.__pause = true;
+    return r;
+  }
+  function answer(S, value) {
+    const a = S.uiAsk; if (!a) return { ok: false, why: 'ไม่มีสิ่งที่รอคำตัดสิน' };
+    S.uiAsk = null;
+    try { a.resume(value); } catch (e) { log(S, '  ↳ ผลของความสามารถขัดข้อง: ' + e.message, 'bad'); }
+    return { ok: true };
+  }
+  function candidatesFor(S, src, op) {
+    const side = src.side;
+    const filt = l => l.filter(u => !staticOf(card(u.id), 'untargetable') || u.side === side);
+    /* ขอบเขตเป้าหมายอ่านจาก op.to / op.zone / op.scope ก่อน แล้วค่อยเดาจาก hint */
+    const key = String(op.to || op.zone || op.scope || '');
+    const wantsFoe = /^(foe|enemy|opponent)/i.test(key) || /enemy|opponent|foe|ศัตรู|ตรงข้าม/i.test(op.hint || '') || /ศัตรู|ตรงข้าม|ของอีกฝ่าย/.test(op.prompt || '');
+    const wantsAny = /^all/i.test(key) || key === 'any';
+    const scope = /BackRow|FrontRow|Core|Units?|All|Row/i.test(key) || wantsFoe || wantsAny ? key : (wantsFoe ? 'enemy' : (op.scope || (/enemy|opponent/i.test(op.hint || '') ? 'enemy' : 'own')));
+    let list;
+    if (/foe|enemy|opponent/i.test(scope)) list = units(S, foe(side));
+    else if (/^all|any/i.test(scope)) list = units(S);
+    else list = units(S, side);
+    /* แถว = เทียบกับ “ของฝ่ายนั้น ๆ” (แถวหลังของศัตรูไม่ equals แถวหลังเรา) */
+    const rowKey = /back|front|core/i.test(scope) ? scope : String(op.row || '');
+    if (/back/i.test(rowKey)) list = list.filter(u => u.r === R.backRow[u.side]);
+    if (/front/i.test(rowKey)) list = list.filter(u => u.r === R.frontRow[u.side]);
+    if (/core/i.test(rowKey)) list = list.filter(u => u.r === R.coreRow);
+    if (op.color) list = list.filter(u => card(u.id).color === op.color);
+    if (op.tribe) list = list.filter(u => (card(u.id).tribe || '').toLowerCase().includes(String(op.tribe).toLowerCase()));
+    if (op.cpMax != null) list = list.filter(u => effCp(S, u) <= op.cpMax);
+    if (op.cpMin != null) list = list.filter(u => effCp(S, u) >= op.cpMin);
+    if (op.notSelf && src.uid) list = list.filter(u => u.uid !== src.uid);
+    if (op.column && src.uid) { const me = S.cards[src.uid]; if (me) list = list.filter(u => u.c === me.c); }
+    return filt(list);
+  }
+  const bestBy = (S, list, mode) => list.slice().sort((a, b) => mode === 'low' ? effCp(S, a) - effCp(S, b) : effCp(S, b) - effCp(S, a))[0];
+
   function fx(S, src, ops, ctx) {
     ctx = ctx || {};
+    return runOps(S, src, ops || [], ctx, 0);
+  }
+  function runOps(S, src, ops, ctx, i) {
+    for (; i < ops.length; i++) {
+      applyOp(S, src, ops[i], ctx, ops, i);
+      if (ctx.__pause) { ctx.__pause = false; return { paused: true }; }
+      if (ctx.__stop) return { stopped: true };
+    }
+    return { done: true };
+  }
+  function applyOp(S, src, op, ctx, ops, i) {
     const side = src.side;
     const who = () => (ctx.toOverride === 'foe' ? foe(side) : side);
     let cancelled = false;
-    (ops || []).forEach(op => {
-      if (cancelled) return;
-      switch (op.op) {
+    const targetOps = { cp: 1, destroy: 1, bounce: 1, move: 1, ready: 1, rest: 1, noDestroyBattle: 1, setPower: 1, damage: 1 };
+    if (op.to === 'target' && !src.tgt && targetOps[op.op]) {
+      const cands = candidatesFor(S, src, op);
+      if (!cands.length) { log(S, '  ↳ ไม่มีเป้าหมายที่ถูกต้อง — ข้ามผลส่วนนี้', 'dim'); return; }
+      const hostile = op.op === 'destroy' || op.op === 'bounce' || (op.op === 'move' && op.hostile) || (typeof op.n === 'number' && op.n < 0 && op.op === 'cp');
+      pauseOp(S, src, op, ctx, ops, i, {
+        kind: 'target', title: op.prompt || (hostile ? 'เลือกเป้าหมายของผลนี้' : 'เลือดยูนิตผู้รับผล'),
+        sub: op.hint || '', uids: cands.map(u => u.uid), allowSkip: true, side, replay: true,
+        auto: () => { const b = hostile ? bestBy(S, cands, 'high') : bestBy(S, cands, op.n < 0 ? 'low' : 'high'); return b && b.uid; },
+        onPick: v => { src.tgt = v ? (S.cards[v] || null) : null; },
+      });
+      return;
+    }
+    switch (op.op) {
         case 'cp': {
           const arr = op.to === 'deployer' ? (ctx.units || []) : pickTargets(S, src, op);
+          fxq(S, { t: 'buff', side, n: op.n, uids: arr.map(x => x && x.uid).filter(Boolean) });
           arr.forEach(u => {
             if (!u) return;
             if (op.dur === 'battle') u.battleCp = (u.battleCp || 0) + op.n;
@@ -246,9 +388,27 @@ const Z = (function () {
           log(S, `  ↳ ผลจาก [${src.uid && S.cards[src.uid] ? card(S.cards[src.uid].id).name : (card(ctx.cardId||'')||{}).name || 'ความสามารถ'}] CP ${op.n > 0 ? '+' : ''}${op.n} (${op.dur || 'turn'})`, 'good');
           break;
         }
-        case 'draw': draw(S, op.to === 'foe' ? foe(side) : side, op.n); break;
-        case 'mill': mill(S, ctx.deployerSide || side, op.n); break;
-        case 'flare': S.players[side].flare = Math.min(99, S.players[side].flare + op.n); break;
+        case 'draw': draw(S, op.to === 'foe' ? foe(side) : side, op.n); fxq(S, { t: 'draw', side: op.to === 'foe' ? foe(side) : side, n: op.n || 1 }); break;
+        case 'discard': {
+          const p2 = S.players[src.side], need = op.n || 1;
+          const doDiscard = (picked) => {
+            let cnt = 0;
+            (picked || []).forEach(idz => { const i2 = p2.hand.indexOf(idz); if (i2 >= 0) { p2.hand.splice(i2, 1); p2.outzone.push(idz); cnt++; } });
+            if (cnt) { fxq(S, { t: 'discard', side: src.side, n: cnt }); log(S, `  ↳ ทิ้ง ${cnt} ใบจากมือ → Outzone`, 'dim'); }
+          };
+          if (!p2.hand.length) break;
+          if (!isHuman(S, src.side)) { doDiscard(p2.hand.slice(0, Math.min(need, p2.hand.length))); break; }
+          ctx.__pause = true;
+          pauseOp(S, src, op, ctx, ops, i, {
+            kind: 'hand', title: op.prompt || (`ทิ้งการ์ด ${need} ใบจากมือ`), sub: op.upTo ? 'จะทิ้งกี่ใบก็ได้ (ไม่เกิน)' : '',
+            cardIds: p2.hand.slice(), need, allowSkip: !!op.upTo, side: src.side,
+            auto: () => p2.hand.slice(0, need), onPick: v => doDiscard(Array.isArray(v) ? v : (v ? [v] : [])),
+          });
+          break;
+        }
+        case 'mill': mill(S, ctx.deployerSide || side, op.n); fxq(S, { t: 'mill', side: ctx.deployerSide || side, n: op.n || 1 }); break;
+
+        case 'flare': S.players[side].flare = Math.min(99, S.players[side].flare + op.n); fxq(S, { t: 'flare', side, n: op.n }); break;
         case 'core': {
           const t = op.to === 'foe' ? foe(side) : side;
           S.players[t].corePoints = Math.max(0, S.players[t].corePoints + op.n);
@@ -276,7 +436,7 @@ const Z = (function () {
           leaveField(S, t, 'hand'); log(S, `  ↳ [${card(t.id).name}] กลับขึ้นมือเจ้าของ`, 'info');
           break;
         }
-        case 'cancel': cancelled = true; ctx.cancelled = true; log(S, `  ⟲ Action ถูกระงับ (Cancel)`, 'good'); break;
+        case 'cancel': cancelled = true; ctx.cancelled = true; ctx.__stop = true; log(S, `  ⟲ Action ถูกระงับ (Cancel)`, 'good'); break;
         case 'summon': {
           const free = backEmpty(S, side);
           if (!free) { log(S, `  ↳ ไม่มีช่องว่างในแถวหลัง — Summon ไม่เกิดผล`, 'dim'); break; }
@@ -290,24 +450,18 @@ const Z = (function () {
           if (spot) { S.cells[u.r][u.c].unit = null; u.r = spot.r; u.c = spot.c; S.cells[u.r][u.c].unit = u; log(S, `  ↳ [${card(u.id).name}] เข้า Core Zone ทันที`, 'good'); }
           break;
         }
-        case 'ascend': {
-          const hosts = units(S, side).filter(u => u.uid !== src.uid && u.r === R.backRow[side] && card(u.id).type === 'unit');
-          const pick = ctx.ascendHost || hosts[0];
-          if (pick && src.uid) {
-            const me = S.cards[src.uid];
-            if (me) { leaveField(S, me, 'outzone'); }
-            pick.fused = (pick.fused || []).concat([src.uid]); pick.permCp = (pick.permCp || 0) + (op.cpPerFused || 0);
-            log(S, `  ♛ Ascend → [${card(pick.id).name}] Fused +1 (CP +${op.cpPerFused})`, 'good');
-            ctx.consumed = true;
-          }
-          break;
-        }
         case 'triggerCheck': triggerCheck(S, op.to === 'foe' ? foe(side) : side); break;
         case 'toOutzone': if (src.uid) leaveField(S, S.cards[src.uid], 'outzone'); break;
 
         case 'ready': case 'rest': {
           const list = targetSet(S, src, op.to, op);
-          list.forEach(u => { if (!u) return; const was = u.rested; u.rested = (op.op === 'rest'); if (op.op === 'ready' && was) S.players[u.side].stats.readyByEffect++; log(S, `  ↳ ${op.op === 'ready' ? 'ตั้ง (Ready)' : 'วางนอน (Rest)'} [${card(u.id).name}]`, 'good'); });
+          list.forEach(u => {
+            if (!u) return;
+            const was = u.rested; u.rested = (op.op === 'rest');
+            if (op.op === 'ready' && was) S.players[u.side].stats.readyByEffect++;
+            fxq(S, { t: op.op === 'ready' ? 'ready' : 'rest', uid: u.uid });
+            log(S, `  ↳ ${op.op === 'ready' ? 'ตั้ง (Ready)' : 'วางนอน (Rest)'} [${card(u.id).name}]`, 'good');
+          });
           break;
         }
         case 'move': {
@@ -327,6 +481,7 @@ const Z = (function () {
           const to = op.to === 'foe' ? foe(src.side) : src.side;
           S.players[to].corePoints += op.n; S.players[to].stats.pointsGained += op.n;
           const who = src.uid && S.cards[src.uid] ? card(S.cards[src.uid].id).name : (card(src.cardId || '') || {}).name || 'ผลAbility';
+          fxq(S, { t: 'point', side: to, n: op.n, total: S.players[to].corePoints });
           log(S, `◆ [${who}] → +${op.n} Point ให้ ${S.players[to].deckName} (รวม ${S.players[to].corePoints}/${R.corePointsToWin})`, 'good');
           if (S.players[to].corePoints >= R.corePointsToWin) { S.winner = to; log(S, `ครบ ${R.corePointsToWin} Point — ${S.players[to].deckName} ชนะ`, 'good'); }
           else triggerCheck(S, foe(to));
@@ -346,18 +501,37 @@ const Z = (function () {
         }
         case 'revealAdd': {
           const p2 = S.players[src.side];
-          const n = op.n === -1 ? Math.max(1, units(S, src.side).filter(u => card(u.id).color === 'Blue' || (card(u.id).tribe || '').includes('Adventurer')).length) : op.n;
-          const seen = p2.deck.slice(0, n).filter(id => matchFilter(S, id, op.filter));
-          log(S, `  ↳ เปิดดู ${n} ใบบนสมุด → เจอที่ตรงเงื่อนไข ${seen.length} ใบ`, 'info');
-          const take = seen[0];
-          if (take) { const i = p2.deck.indexOf(take); p2.hand.push(...[]); p2.deck.splice(i, 1); if (p2.hand.length > R.handMax) p2.remove.push(p2.hand.pop()); p2.hand.push(take); }
+          const n = op.n === -1 ? Math.max(1, units(S, src.side).filter(u => card(u.id).color === 'Blue' || (card(u.id).tribe || '').toLowerCase().includes('adventurer')).length) : (op.n || 1);
+          const ids = revealTop(S, src.side, n, op.prompt || 'เปิดดูสมุด');
+          const ok = ids.filter(id => matchFilter(S, id, op.filter) && (op.maxCost == null || (card(id).cost || 0) <= op.maxCost) && (op.minCost == null || (card(id).cost || 0) >= op.minCost) && (!op.onlyType || card(id).type === op.onlyType));
+          const finish = (chosen) => {
+            if (chosen) { const k = ids.indexOf(chosen); if (k >= 0) ids.splice(k, 1); toHand(S, src.side, chosen); fxq(S, { t: 'tohand', side: src.side, cardId: chosen }); log(S, `  ↳ นำ [${card(chosen).name}] ขึ้นมือ`, 'good'); }
+            else log(S, '  ↳ ไม่เลือกใบใด — ทั้งหมดกลับใต้สมุด', 'dim');
+            if (op.rest !== 'outzone') restToBottom(S, src.side, ids); else ids.forEach(idz => S.players[src.side].outzone.push(idz));
+          };
+          if (!ok.length) { log(S, '  ↳ ไม่มีการ์ดตรงเงื่อนไข — กลับใต้สมุดทั้งหมด', 'dim'); restToBottom(S, src.side, ids); break; }
+          if (!isHuman(S, src.side)) { finish(op.upTo === false ? ok[0] : ok[0]); break; }
+          ctx.__pause = true;
+          pauseOp(S, src, op, ctx, ops, i, {
+            kind: 'reveal', title: op.prompt || `เลือกการ์ดจาก ${ids.length} ที่เปิดดู`, sub: op.filter ? `ตรงเงื่อนไข: ${op.filter}` : '',
+            cardIds: ids.map(i2 => i2), pickIds: ok.slice(), allowSkip: op.upTo !== false, side: src.side,
+            auto: () => ok[0], onPick: v => finish(v),
+          });
           break;
         }
-        case 'toBottomRest': { /* ใบที่ไม่ใช้ยัดใต้เด็ค (ผลรวมคล้ายกัน — คงลำดับสุ่ม) */ break; }
+        case 'reveal': { revealTop(S, src.side, op.n || 1, op.prompt || 'เปิดเผยการ์ดด้านบน'); break; }
+        case 'toBottomRest': { const ids = (S.reveal && S.reveal.side === src.side) ? S.reveal.ids.slice() : []; restToBottom(S, src.side, ids); break; }
         case 'addFromOutzone': {
           const p2 = S.players[src.side];
-          const i = p2.outzone.findIndex(id => matchFilter(S, id, op.filter));
-          if (i >= 0) { const id = p2.outzone.splice(i, 1)[0]; p2.hand.push(id); log(S, `  ↳ เอา [${card(id).name}] จาก Outzone ขึ้นมือ`, 'good'); }
+          const cands = p2.outzone.filter(id => matchFilter(S, id, op.filter));
+          if (!cands.length) { log(S, '  ↳ ไม่มีใน Outzone ที่ตรงเงื่อนไข', 'dim'); break; }
+          const take = (idz) => { const k = p2.outzone.indexOf(idz); if (k >= 0) { p2.outzone.splice(k, 1); toHand(S, src.side, idz); fxq(S, { t: 'tohand', side: src.side, cardId: idz }); log(S, `  ↳ เอา [${card(idz).name}] จาก Outzone ขึ้นมือ`, 'good'); } };
+          if (cands.length === 1 || !isHuman(S, src.side)) { take(cands[0]); break; }
+          ctx.__pause = true;
+          pauseOp(S, src, op, ctx, ops, i, {
+            kind: 'outzone', title: op.prompt || 'เลือกการด์จาก Outzone', cardIds: cands.slice(), side: src.side,
+            auto: () => cands[0], onPick: v => v && take(v),
+          });
           break;
         }
         case 'playFromOutzone': case 'playOutzoneRest': case 'playRevealed': {
@@ -385,7 +559,22 @@ const Z = (function () {
         case 'shiftCost': { if (src.uid && S.cards[src.uid]) { const u = S.cards[src.uid]; u.costShift = (u.costShift || 0) + (op.n || 1); } break; }
         case 'setCostField': targetSet(S, src, op.to, op).forEach(u => { if (u) { u.costLocked = op.n; } }); break;
         case 'ascend': {
-          const host = src.tgt || targetSet(S, src, 'allyHost', op)[0];
+          const hh = targetSet(S, src, 'allyHost', op);
+          const askHost = (cb) => {
+            if (!hh.length) { cb(null); return; }
+            if (hh.length === 1 || !isHuman(S, src.side)) { cb(hh[0]); return; }
+            ctx.__pause = true;
+            pauseOp(S, src, op, ctx, ops, i, {
+              kind: 'target', title: op.prompt || 'เลือกยูนิตที่จะวางทับ (Ascend)', uids: hh.map(u => u.uid), side: src.side,
+              auto: () => hh[0].uid, onPick: v => cb(v ? S.cards[v] : null),
+            });
+          };
+          askHost((h) => { if (h) src.tgt = h;
+          const host0 = src.tgt || hh[0];
+          doAscend(host0);
+          });
+          function doAscend(host) {
+            if (!host || !src.uid) return;
           const me = src.uid ? S.cards[src.uid] : null;
           if (host && me) {
             const pay = op.refund ? Math.min(costNow(S, src.side, me.id, true) , host.costShift || 0) : 0;
@@ -394,7 +583,9 @@ const Z = (function () {
             host.permCp = (host.permCp || 0) + (op.cpPerFused || 0);
             host.ascended = true;
             S.players[src.side].flare = Math.min(99, S.players[src.side].flare + pay);
+            fxq(S, { t: 'ascend', uid: host.uid });
             log(S, `  ♛ Ascend → ซ้อนบน [${card(host.id).name}] (Fused ${host.fused.length}, +${op.cpPerFused || 0} CP)`, 'good');
+          }
           }
           break;
         }
@@ -413,20 +604,40 @@ const Z = (function () {
           break;
         }
         case 'foeDestroyChoice': {
-          const foeUnits = units(S, foe(src.side));
-          if (foeUnits.length) {
-            const victim = foeUnits.sort((a, b) => effCp(S, b) - effCp(S, a))[0];
-            destroyTo(S, victim, 'ผลของการ์ด —');
-            if (victim.r === R.coreRow) draw(S, foe(src.side), 1);
-          }
+          const foes = units(S, foe(src.side));
+          if (!foes.length) break;
+          ctx.__pause = true;
+          pauseOp(S, src, op, ctx, ops, i, {
+            kind: 'target', title: 'ผู้ถูก effect เลือกยูนิตของตัวเองที่จะถูกทำลาย', uids: foes.map(u => u.uid), side: foe(src.side),
+            auto: () => (bestBy(S, foes, 'low') || {}).uid,
+            onPick: v => { const vic = v && S.cards[v]; if (vic) { const wasCore = vic.r === R.coreRow; destroyTo(S, vic, 'ผลของการ์ด —'); if (wasCore) draw(S, vic.side, 1); } },
+          });
           break;
         }
         case 'banish': { if (src.uid && S.cards[src.uid]) leaveField(S, S.cards[src.uid], 'remove'); break; }
-        default: break;
-      }
-    });
-    return ctx;
+        default: {
+          const ext = window.Zfx && window.Zfx[op.op];
+          if (ext && ext !== FXPLACE) {
+            const r = ext(S, src, op, ctx, ops, i);
+            if (r === 'pause') ctx.__pause = true;
+            else if (r === 'stop') ctx.__stop = true;
+          } else if (!ext) log(S, '  ! op ไม่รู้จัก: ' + op.op, 'bad');
+          break;
+        }
+    }
+    if (cancelled) ctx.__stop = true;
   }
+  /* ชุด helper ส่งให้ effects.js / AI ใช้ (reference เดียวกับที่ engine ใช้) */
+  const FXPLACE = 0;
+  function helpers() {
+    return { runOps, isHuman, log, fxq, ask, pauseOp, answer, makeCard, leaveField, destroyTo, destroyTerrainObj, revealTop, restToBottom, toHand,
+      targetSet, pickTargets, candidatesFor, bestBy, matchFilter, effCp, units, terrains, unitAt, cell, cellFx, hasFlag,
+      draw, mill, foe, key, pk, inB, R, card, backEmpty, emptyCells, frontCells, canStand, unitCount, terrainLimit, isMultiTerrain,
+      staticOf, runHook, payCostOfHand: costNow, execStepMove, movementLocked, legalMoveCells, attackTargets, matchFilter, sideOf: () => S => S.active };
+  }
+  /* ค่าคงที่ที่ ability-ops.js สกัดไว้ */
+  function staticOf(cd, key) { return (cd && cd.statics && cd.statics[key]) || null; }
+  function hook(name, S, arg) { if (window.Zhook) { try { window.Zhook(name, S, arg); } catch (e) { log(S, 'hook ' + name + ': ' + e.message, 'bad'); } } }
 
   function backEmpty(S, side) {
     const r = R.backRow[side];
@@ -452,11 +663,15 @@ const Z = (function () {
   function runHook(S, side, uid, when, extra) {
     const u = S.cards[uid]; if (!u) return;
     const cd = card(u.id);
-    hooksOf(cd, when).forEach(a => {
-      if (a.req && !passReq(S, side, u, a.req)) return;
+    const list = hooksOf(cd, when);
+    for (const a of list) {
+      if (a.req && !passReq(S, side, u, a.req)) continue;
+      fxq(S, { t: 'effect', uid, side, kw: a.kw, text: a.text });
       log(S, `  ⟩ ${a.kw} [${cd.name}] — ${a.text}`, 'play');
-      fx(S, { side, uid }, a.ops, extra || {});
-    });
+      const out = fx(S, { side, uid, cardId: u.id }, a.ops, extra || {});
+      if (out && out.paused) return { paused: true };
+    }
+    return { done: true };
   }
 
   /* ---------- helpers สำหรับ ops ของการ์ดจริง ---------- */
@@ -488,6 +703,13 @@ const Z = (function () {
       }
       case 'allyHost': return units(S, side).filter(u => u.uid !== src.uid && u.r === R.backRow[side]);
       case 'deployer': return ctxUnits(S, src);
+      /* ---- ฝั่งตรงข้าม ---- */
+      case 'foe': case 'foeAll': case 'foeUnits': return byFilter(units(S, foe(side)));
+      case 'foeBackRow': return byFilter(units(S, foe(side)).filter(u => u.r === R.backRow[u.side]));
+      case 'foeFrontRow': return byFilter(units(S, foe(side)).filter(u => u.r === R.frontRow[u.side]));
+      case 'foeCore': case 'foeCoreUnits': return byFilter(units(S, foe(side)).filter(u => u.r === R.coreRow));
+      case 'enemyUnit': case 'enemy': return byFilter(units(S, foe(side)));
+      case 'allUnits': return byFilter(units(S));
       default: return [];
     }
   }
@@ -515,6 +737,7 @@ const Z = (function () {
     runHook(S, t.side, t.uid, 'terrainDestroyed', {});
     runHook(S, t.side, t.uid, 'action', { terrainDestroyed: true });
     leaveField(S, t, 'outzone');
+    hook('terrainDestroyed', S, { side: t.side });
     log(S, `💥 Terrain [${card(t.id).name}] ถูกทำลาย → Outzone`, 'bad');
     sideUnits(S, t.side).forEach(u => runHook(S, t.side, u.uid, 'terrainDestroyed', {}));
   }
@@ -568,12 +791,16 @@ const Z = (function () {
 
   function responseOptions(S, side, ev) {
     const p = S.players[side];
+    if (ev && ev.kind && ev.kind !== 'attack' && ev.kind !== 'command' && ev.kind !== 'deploy') return [];
+    const battleOnly = (cdX) => (cdX.abilities || []).some(a => (a.ops || []).some(o => o && o.op === 'onPlay' && o.hook === 'battle'));
     const out = [];
     p.hand.forEach((id, i) => {
       const cd = card(id);
       if (cd.type !== 'command') return;
-      const ab = (cd.abilities || []).find(a => a.kw === 'Counter' || a.kw === 'Quick-Cast');
+      let ab = (cd.abilities || []).find(a => a.kw === 'Counter' || a.kw === 'Quick-Cast');
+      if (!ab) ab = (cd.abilities || []).find(a => (a.ops || []).some(o => o && o.op === 'onPlay' && (o.hook === 'battle')));
       if (!ab) return;
+      if (battleOnly(cd) && ev && ev.kind !== 'attack' && (!ev.attackerUid || !(S.cards[ev.attackerUid] || {}).battle)) return [];
       if (cd.cost > p.flare) return;
       if (ab.ops && ab.ops.some(o => o.op === 'cancel') && ev.kind !== 'attack' && ev.kind !== 'command' && ev.kind !== 'deploy') return;
       out.push(i);
@@ -582,12 +809,16 @@ const Z = (function () {
   }
 
   function applyCounterFromHand(S, side, handIdx, ev) {
+    if (ev && ev.tgt) S.__attackedUid = ev.tgt.uid;
     const p = S.players[side]; const id = p.hand[handIdx]; const cd = card(id);
-    const ab = (cd.abilities || []).find(a => a.kw === 'Counter' || a.kw === 'Quick-Cast');
+    let ab = (cd.abilities || []).find(a => a.kw === 'Counter' || a.kw === 'Quick-Cast');
+    if (!ab) ab = (cd.abilities || []).find(a => (a.ops || []).some(o => o && (o.op === 'protect' || o.op === 'noDestroy' || o.op === 'battleEffect' || o.op === 'perOwnedGreenTerrainBuff')));
+    ab = ab || (cd.abilities || [])[0];
     p.flare -= cd.cost;
     p.hand.splice(handIdx, 1);
     log(S, `⟲ ตอบโต้ [${cd.name}] (จ่าย Flare ${cd.cost}) — ${ab ? ab.text : ''}`, 'guard');
-    const ctx = fx(S, { side, uid: null, tgt: ev.tgt || null }, (ab && ab.ops) || []);
+    const src = { side, uid: null, cardId: id, tgt: ev.tgt || null, eff: { target: ev.tgt && ev.tgt.uid, attacked: true, from: ev.attackerUid } };
+    const ctx = fx(S, src, (ab && ab.ops) || []);
     p.outzone.push(id);
     if (ctx && ctx.cancelled && S.pending) S.pending.cancelled = true;
     return ctx;
@@ -609,6 +840,7 @@ const Z = (function () {
       if (free) return { ok: false, why: `สนามเต็ม (ยูนิตไม่เกิน ${R.unitLimit} ตัว)` };
       p.flare -= cd.cost; p.hand.splice(a.handIdx, 1);
       const u = makeCard(S, id, a.side, a.cell.r, a.cell.c, 'unit');
+      fxq(S, { t: 'deploy', uid: u.uid, side: a.side, cell: [a.cell.r, a.cell.c] });
       log(S, `⛬ Deploy [${cd.name}] → ช่อง ${a.cell.r + 1}-${a.cell.c + 1} (Flare ${cd.cost})`, 'play');
       const t = S.cells[a.cell.r][a.cell.c].terrain;
       if (t) runHook(S, t.side, t.uid, 'deployHere', { deployerSide: a.side, units: [u] });
@@ -655,6 +887,8 @@ const Z = (function () {
       fx(S, { side: a.side, uid: holder ? holder.uid : null, tgt: a.tgtUid ? S.cards[a.tgtUid] : null, cardId: id }, (ab && ab.ops) || []);
       if (holder) leaveField(S, holder, 'outzone'); else p.outzone.push(id);
       units(S, a.side).forEach(x => runHook(S, a.side, x.uid, 'action', { commandPlayed: true }));
+      if (/Operation/i.test(cd.tribe || '')) { p.stats.operationPlayed = (p.stats.operationPlayed || 0) + 1; hook('operationPlayed', S, { side: a.side }); }
+      hook('commandPlayed', S, { side: a.side });
       return { ok: true };
     }
     if (a.kind === 'ability') {
@@ -683,7 +917,9 @@ const Z = (function () {
     S.cells[u.r][u.c].unit = null;
     u.r = a.to.r; u.c = a.to.c;
     S.cells[u.r][u.c].unit = u;
+    fxq(S, { t: 'move', uid: u.uid, to: [u.r, u.c] });
     log(S, `↝ [${cd.name}] เดิน → ${u.r + 1}-${u.c + 1} (วางนอน)`, 'move');
+    hook('move', S, { side: u.side, uid: u.uid, to: [u.r, u.c] });
     const firstCore = u.r === R.coreRow && u.coreSeen !== true;
     u.coreSeen = true;
     const t = S.cells[u.r][u.c].terrain;
@@ -710,15 +946,28 @@ const Z = (function () {
     runHook(S, attacker.side, attacker.uid, 'attack', {});
     /* 3) CP compare */
     const atk = effCp(S, attacker), dl = effCp(S, def);
+    fxq(S, { t: 'attack', from: attacker.uid, to: def.uid, n: atk });
     def.dmg = (def.dmg || 0) + atk;
+    fxq(S, { t: 'hit', uid: def.uid, n: atk, left: effCp(S, def) });
     log(S, `  ↳ วัดค่าพลัง: ${atk} → [${dcd.name}] ${dl} เหลือ ${effCp(S, def)}`, 'attack');
+    hook('battle', S, { side: S.active, from: attacker.uid, target: def.uid });
+    if (S.battleOverride && S.battleOverride.lowerWinsDie) {
+      const la = effCp(S, attacker), ld = effCp(S, def);
+      const loser = la <= ld ? def : attacker;
+      if (S.cards[loser.uid]) destroyTo(S, loser, '⚖ ผลพิเศษ — ผู้_POWER ต่ำกว่าล้ม');
+      log(S, `  ⚖ ผลพิเศษ: ฝ่ายพลังต่ำกว่า (${card(loser.id).name}) เป็นฝ่ายล้ม`, 'guard');
+      S.battleOverride = null;
+    }
     if (S.cards[def.uid] && effCp(S, def) <= 0) {
       if (def.noDestroyBattle) log(S, `  🛡 [${dcd.name}] ไม่ถูกทำลายจากการต่อสู้ (ยังเหลือ ${effCp(S, def)} CP)`, 'guard');
       else destroyTo(S, def, '💥 ถูกทำลาย');
     }
     /* 4) end of battle */
+    S.battleOverride = null;
     [attacker, def].forEach(u => { if (u && S.cards[u.uid]) u.battleCp = 0; });
+    if (staticOf(card(attacker.id), 'readyAfterAttack') && S.cards[attacker.uid]) { attacker.rested = false; fxq(S, { t: 'ready', uid: attacker.uid }); log(S, `  ↳ [${card(attacker.id).name}] กลับตั้งหลังโจมตี`, 'good'); }
     runHook(S, attacker.side, attacker.uid, 'endBattle', {});
+    hook('battleEnd', S, { side: attacker.side, from: attacker.uid, target: def ? def.uid : null });
     return { ok: true };
   }
 
@@ -728,6 +977,14 @@ const Z = (function () {
   /* "unit นี้เคลื่อนที่ไม่ได้" ตามเงื่อนไขที่ระบุในตัวการ์ด */
   function movementLocked(S, u) {
     const cd = card(u.id), st = S.players[u.side];
+    const lk = staticOf(cd, 'moveLock');
+    if (lk) {
+      if (lk.value === 'outzoneLt' && st.outzone.length < (lk.n || 11)) return true;
+      if (lk.value === 'noAllyColorOrTribe') {
+        const any = units(S, u.side).some(x => x.uid !== u.uid && (card(x.id).color === lk.color || (card(x.id).tribe || '').includes(lk.tribe)));
+        if (!any) return true;
+      }
+    }
     for (const f of (cd.flags || [])) {
       const m = /^noMoveOutzone:(\d+)$/.exec(f);
       if (m && st.outzone.length <= +m[1]) { if (u.side === S.active) return true; }
@@ -785,7 +1042,7 @@ const Z = (function () {
       const r = u.r + dr, c = u.c + dc;
       if (!inB(r, c)) return;
       const t = S.cells[r][c].unit;
-      if (t && t.side !== u.side) out.push(t);
+      if (t && t.side !== u.side && !staticOf(card(t.id), 'untargetable')) out.push(t);
     });
     return out;
   }
@@ -800,13 +1057,25 @@ const Z = (function () {
       const r = (a.req || []).find(x => x.kind === 'handCostReduce');
       if (!r) return;
       let n = 0;
-      if (r.by === 'terrainDestroyed') n = S.players[side].stats.terrainDestroyed;
+      if (r.by === 'terrainDestroyed' || r.by === 'terrainDestroyedThisTurn') n = S.players[side].stats.terrainDestroyed;
+      else if (r.by === 'terrainHeldOrDestroyed') n = S.players[side].stats.terrainDestroyed + (terrains(S, side).length ? 1 : 0);
+      else if (r.by === 'blueUnitsControlled') n = units(S, side).filter(u => card(u.id).color === 'Blue').length;
       else if (r.by === 'terrainControl') n = Z_.terrains(S, side).length ? 1 : 0;
       else if (r.by === 'colorUnits') n = 'color:Blue';
       if (n === 'color:Blue') n = units(S, side).filter(u => card(u.id).color === 'Blue').length;
       c -= (r.per || 1) * Math.min(n, 9);
     });
     if (cd.setCost != null) c = cd.setCost;
+    const cr = staticOf(cd, 'costIfReturnedThisTurn');
+    if (cr && S.returnedThisTurn && S.returnedThisTurn[id]) c = Math.min(c, cr.value);
+    const reds = (cd.abilities || []).filter(a => a.ops && a.ops.some(o => o && o.op === 'static' && o.key === 'costReduce'));
+    reds.forEach(a => a.ops.filter(o => o.op === 'static' && o.key === 'costReduce').forEach(o => {
+      let n = 0;
+      if (o.by === 'terrainDestroyedThisTurn') n = S.players[side].stats.terrainDestroyed;
+      else if (o.by === 'terrainHeldOrDestroyed') n = S.players[side].stats.terrainDestroyed + (terrains(S, side).length ? 1 : 0);
+      else if (o.by === 'blueUnitsControlled') n = units(S, side).filter(u => card(u.id).color === 'Blue').length;
+      c -= (o.per || 1) * Math.min(n, 9);
+    }));
     return Math.max(0, c);
   }
 
@@ -815,6 +1084,8 @@ const Z = (function () {
     const cd = card(id);
     const cost = costNow(S, side, id);
     if (cost > p.flare) return { ok: false, why: `Flare ไม่พอ (ต้อง ${cost})` };
+    const rt = staticOf(cd, 'requiresTribe');
+    if (rt && !units(S, side).some(u => (card(u.id).tribe || '').includes(rt.value))) return { ok: false, why: `ต้องคุมเผ่า ${rt.value} ถึงจะเล่นได้` };
     if (cd.type === 'unit' || cd.type === 'token') {
       if (unitCount(S, side) >= R.unitLimit) return { ok: false, why: `สนามเต็ม (${R.unitLimit} ยูนิต)` };
       const cells = emptyCells(S, side, [R.backRow[side]]);
@@ -853,6 +1124,7 @@ const Z = (function () {
   const actApi = {
     deploy(S, side, handIdx, c) {
       if (S.active !== side) return { ok: false, why: 'ไม่ใช่เทิร์นของคุณ' };
+      if (S.uiAsk) return { ok: false, why: 'มีการเลือกราค้างอยู่' };
       const info = cardPlayable(S, side, handIdx); if (!info || !info.ok) return info || { ok: false, why: 'ลงไม่ได้' };
       if (!info.cells.some(x => x.r === c.r && x.c === c.c)) return { ok: false, why: 'ตำแหน่งนี้ลงไม่ได้' };
       S.turnActions++;
@@ -894,7 +1166,7 @@ const Z = (function () {
       if (S.players[side].flare < cost) return { ok: false, why: `โจมตีต้องใช้ Flare ${cost}` };
       if (!attackTargets(S, u).some(t => t.uid === tgtUid)) return { ok: false, why: 'เป้าหมายอยู่นอกระยะโจมตี' };
       S.turnActions++;
-      return openResponse(S, side, { kind: 'attack', tgt: S.cards[tgtUid] }, { kind: 'attack', uid, tgtUid });
+      return openResponse(S, side, { kind: 'attack', tgt: S.cards[tgtUid], attackerUid: uid }, { kind: 'attack', uid, tgtUid });
     },
     ability(S, side, uid) {
       if (S.active !== side) return { ok: false, why: 'ไม่ใช่เทิร์นของคุณ' };
@@ -916,15 +1188,17 @@ const Z = (function () {
     },
     endTurn(S) {
       if (S.pending) return { ok: false, why: 'มีการตอบโต้ค้างอยู่' };
+      if (S.uiAsk) return { ok: false, why: 'มีการเลือกราค้างอยู่' };
       return endTurn(S);
     },
+    revealOf(S) { return S.reveal; },
   };
 
 
   const API = Object.assign({
     init, startTurn, endTurn, draw, mill, triggerCheck, doAction, openResponse, responseOptions,
     cardPlayable, arcPlayable, legalMoveCells, attackTargets, canReach, steps, backEmpty, emptyCells, frontCells,
-    fx, passReq, cellFx, cellCpBonus, hasFlag, movementLocked, isMultiTerrain, unitAt, cell, card, foe, key, pk, inB, log, canFreeAttack, terrainLimit,
+    fx, passReq, answer, drainFx, fxq, ask, revealTop, toHand, candidatesFor, helpers, staticOf, hook, cellFx, cellCpBonus, hasFlag, movementLocked, isMultiTerrain, unitAt, cell, card, foe, key, pk, inB, log, canFreeAttack, terrainLimit,
     flareOf, pay, unitCount, rowOwner, canStand, fwd, effCp, units, terrains, R, leaveField, destroyTo, roll,
     list: S => Object.values(S.cards),
   }, actApi);

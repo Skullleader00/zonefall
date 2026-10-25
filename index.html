@@ -90,9 +90,26 @@
   <!-- ================= HAND ================= -->
   <section id="handWrap">
     <div class="hand-head"><span id="handLabel">มือ : 4</span><span class="hint" id="hint">แตะการ์ดในมือเพื่อลง</span></div>
-    <div id="hand" class="hand"></div>
+    <div class="hand-wrap2">
+      <button class="pgbtn" id="pgL" aria-label="เลื่อนมือไปซ้าย">‹</button>
+      <div id="hand" class="hand"></div>
+      <button class="pgbtn" id="pgR" aria-label="เลื่อนมือไปขวา">›</button>
+    </div>
   </section>
 
+  </div>
+
+  <!-- ============ แถบแสดงการ์ดที่เปิดจากสมุด ============ -->
+  <div id="revealStrip" class="reveal-strip"></div>
+
+  <!-- ============ หน้าต่างขอให้ผู้เล่นเลือก (เป้าหมาย / เปิดสมุด / ทิ้ง / ทริกเกอร์) ============ -->
+  <div id="askVeil" class="guard-veil hidden"></div>
+  <div id="askPanel" class="pick-panel hidden">
+    <button class="pick-x" id="askX">×</button>
+    <div class="pick-title" id="askTitle">เลือกเป้าหมาย</div>
+    <div class="ask-cards" id="askCards"></div>
+    <div class="pick-bar"><i id="askBar"></i></div>
+    <div class="pick-act" id="askActs"></div>
   </div>
 
   <!-- ============ Declaration-Response ============ -->
@@ -102,7 +119,7 @@
     <div class="guard-opts" id="guardOpts"></div>
   </div>
 
-  <!-- ============ Target / choose popup (ตาม mockup: carousel + ไม่/ใช่) ============ -->
+  <!-- ============ Target / choose popup ============ -->
   <div id="pickVeil" class="guard-veil hidden"></div>
   <div id="pickPanel" class="pick-panel hidden">
     <button class="pick-x" id="pickX">×</button>
@@ -187,7 +204,9 @@
 
 </div>
 <script src="js/data.js"></script>
+<script src="js/ability-ops.js"></script>
 <script src="js/engine.js"></script>
+<script src="js/effects.js"></script>
 <script src="js/ai.js"></script>
 <script src="js/ui.js"></script>
 </body>

@@ -18,7 +18,10 @@ const res = run(`
         var g = 0; while (S.pending && g++ < 10) Z.respond(S, null);
       }
     } catch (e) { err = e.message + ' @ ' + String(e.stack).split('\\n')[1].trim().slice(0, 80); }
-    out.push({ seed: s, w: S.winner, turns: S.turnNo, err: err, pts: [S.players.p0.corePoints, S.players.p1.corePoints] });
+    var n = function (re) { return S.log.filter(function (L) { return re.test(L.msg); }).length; };
+    out.push({ seed: s, w: S.winner, turns: S.turnNo, err: err,
+      pts: [S.players.p0.corePoints, S.players.p1.corePoints],
+      fx: n(/⟩ /), ctr: n(/ตอบโต้/), trig: n(/Trigger Check/), deckLeft: [S.players.p0.deck.length, S.players.p1.deck.length] });
   }
   return out;
 `);
@@ -27,7 +30,9 @@ const errCount = res.filter(r => r.err).length;
 const wins = {}, unfinished = res.filter(r => !r.w && !r.err).length;
 res.forEach(r => { if (r.w) wins[r.w] = (wins[r.w] || 0) + 1; });
 const avg = (res.reduce((a, b) => a + b.turns, 0) / res.length).toFixed(1);
+const sum = k => res.reduce((a, b) => a + (b[k] || 0), 0);
 console.log(`games ${res.length} | errors ${errCount} | no-winner ${unfinished} | avg turns ${avg} | win rate ${JSON.stringify(wins)}`);
+console.log(`ability ทำงาน ${sum('fx')} ครั้ง | ตอบโต้ ${sum('ctr')} ครั้ง | Trigger Check ${sum('trig')} ครั้ง (เฉลี่ย ${(sum('trig') / res.length).toFixed(1)}/เกม)`);
 if (errCount) {
   const seen = {};
   res.filter(r => r.err).forEach(r => { seen[r.err] = (seen[r.err] || 0) + 1; });

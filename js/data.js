@@ -10,7 +10,7 @@
 
 const RULES = {
   name: 'Zonefall',
-  version: 'Dev V.24 · digital build v1.2 ( การ์ดจริง 52 ใบ · ไม่มี Arcanum · Flare เริ่ม 3 )',
+  version: 'Dev V.24 · digital build v1.4 ( การ์ดจริง 52 ใบ · ทุกความสามารถต่อผลแล้ว · ไม่มี Arcanum · Flare เริ่ม 3 )',
   rows: 5, cols: 3, coreRow: 2,
   backRow: { p0: 4, p1: 0 }, frontRow: { p0: 3, p1: 1 },
   corePointsToWin: 7,
